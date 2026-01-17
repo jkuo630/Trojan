@@ -59,7 +59,7 @@ const scanLogs = [
 
 interface ScannerDemoProps {
   initialCode?: string | null;
-  repoFiles?: { name: string; path: string }[];
+  repoFiles?: { name: string; path: string; functions?: string[] }[];
   currentFileIndex?: number;
   onFileSelect?: (index: number) => void;
   onScanComplete?: () => void;
@@ -75,6 +75,22 @@ export default function ScannerDemo({
   const [foundIssues, setFoundIssues] = useState<CodeAnnotation[]>([]);
   const [logs, setLogs] = useState<string[]>([]);
   const logsEndRef = useRef<HTMLDivElement>(null);
+
+  // Effect to log functions when a new file starts scanning
+  useEffect(() => {
+    if (repoFiles && repoFiles[currentFileIndex]) {
+      const file = repoFiles[currentFileIndex];
+      const newLogs = [`Analyzing ${file.name}...`];
+      
+      if (file.functions && file.functions.length > 0) {
+        newLogs.push(`Detected ${file.functions.length} functions: ${file.functions.join(", ")}`);
+      }
+      
+      newLogs.forEach(msg => {
+         setLogs(prev => [...prev, `[${new Date().toLocaleTimeString().split(' ')[0]}] ${msg}`]);
+      });
+    }
+  }, [currentFileIndex, repoFiles]);
 
   useEffect(() => {
     logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
