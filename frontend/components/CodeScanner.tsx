@@ -21,6 +21,8 @@ interface CodeScannerProps {
   language?: string;
   className?: string;
   annotations?: CodeAnnotation[];
+  onScanLine?: (lineIndex: number) => void;
+  onScanComplete?: () => void;
 }
 
 export function CodeScanner({
@@ -28,6 +30,8 @@ export function CodeScanner({
   language = "typescript",
   className,
   annotations = [],
+  onScanLine,
+  onScanComplete,
 }: CodeScannerProps) {
   const [tokens, setTokens] = useState<ThemedToken[][]>([]);
   const [loading, setLoading] = useState(true);
@@ -62,17 +66,19 @@ export function CodeScanner({
     const processNextLine = () => {
       if (currentLine >= tokens.length) {
         setActiveLineIndex(tokens.length); // All done
+        onScanComplete?.();
         return;
       }
 
       setActiveLineIndex(currentLine);
+      onScanLine?.(currentLine);
 
       // Dynamic speed: faster for empty lines, slower for dense code
       const lineTokens = tokens[currentLine];
       const hasContent = lineTokens.some(t => t.content.trim().length > 0);
       const isAnnotation = annotations.some(a => a.line === currentLine + 1);
       
-      let delay = 5; // Base speed (super fast)
+      let delay = 20; // Base speed (super fast)
       if (hasContent) delay += 15; // Reading time
       if (isAnnotation) delay += 80; // Brief pause on findings
       
@@ -89,7 +95,7 @@ export function CodeScanner({
     return () => clearTimeout(timeoutId);
   }, [loading, tokens, annotations]);
 
-  if (loading) {
+  if (loading || !code) {
     return <div className="p-4 font-mono text-sm text-gray-500">Loading visualization...</div>;
   }
 
