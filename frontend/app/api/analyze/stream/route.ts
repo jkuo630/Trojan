@@ -178,7 +178,8 @@ export async function POST(req: NextRequest) {
                 const eventData = JSON.parse(line.substring(11)); // Remove "__STREAM__:" prefix
                 if (eventData.type === "auth_vulnerability" || 
                     eventData.type === "injection_vulnerability" ||
-                    eventData.type === "sensitive_data_vulnerability") {
+                    eventData.type === "sensitive_data_vulnerability" ||
+                    eventData.type === "cryptographic_vulnerability") {
                   sendEvent("vulnerability", { ...eventData.data, _vulnerabilityType: eventData.type });
                 } else if (eventData.type === "suspicious_files") {
                   sendEvent("suspicious_files", eventData.data);
