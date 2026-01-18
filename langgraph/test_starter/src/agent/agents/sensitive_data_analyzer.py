@@ -45,7 +45,9 @@ Focus on finding:
 
 IMPORTANT: You MUST provide the exact line number for each vulnerability found. Analyze the code content carefully and identify the specific line where the sensitive data is exposed.
 
-Return JSON array of vulnerabilities found. Each entry MUST include: line (integer line number, not null), type (string - e.g., "Hardcoded API Key", "Plaintext Password"), severity (high/medium/low), description (string), location (file path)."""
+Return JSON array of vulnerabilities found. Each entry MUST include: line (integer line number, not null), type (string - e.g., "Hardcoded API Key", "Plaintext Password"), severity (high/medium/low), description (string - detailed explanation up to 4 sentences), location (file path).
+
+DESCRIPTION REQUIREMENTS: The description field must be detailed and informative, explaining what the vulnerability is, why it's a security risk, what the potential impact could be, and ideally how it should be fixed. Use up to 4 sentences to provide comprehensive context."""
 
     if file_content:
         user_prompt = f"""Analyze this file for sensitive data exposure vulnerabilities:
@@ -66,14 +68,14 @@ Example format:
     "line": 42,
     "type": "Hardcoded API Key",
     "severity": "high",
-    "description": "API key hardcoded in source code at line 42: 'sk_live_1234567890abcdef'",
+    "description": "API key hardcoded in source code at line 42: 'sk_live_1234567890abcdef'. Hardcoded credentials in source code pose a severe security risk as they can be exposed through version control systems, code repositories, or insider threats. If this key is leaked, attackers could gain unauthorized access to third-party services, potentially leading to data breaches or financial loss. The API key should be stored in environment variables, secure configuration management systems, or secret management services, and never committed to version control.",
     "location": "{file_path}"
   }},
   {{
     "line": 89,
     "type": "Plaintext Password",
     "severity": "high",
-    "description": "Database password stored in plaintext variable at line 89",
+    "description": "Database password stored in plaintext variable at line 89, exposing sensitive credentials in the application code. Plaintext passwords can be easily discovered by anyone with access to the codebase, including through code reviews, version control history, or compromised repositories. If an attacker gains access to this password, they could directly connect to the database and access, modify, or delete all stored data. The password should be stored securely using environment variables or a secrets management system, and never hardcoded in the source code.",
     "location": "{file_path}"
   }},
   {{
@@ -85,7 +87,7 @@ Example format:
   }}
 ]
 
-If no vulnerabilities found, return empty array []. Be specific about what sensitive data is exposed and ALWAYS include the line number."""
+If no vulnerabilities found, return empty array []. Be specific about what sensitive data is exposed and ALWAYS include the line number. Provide detailed descriptions (up to 4 sentences) explaining the vulnerability, its risks, potential impact, and remediation."""
     else:
         user_prompt = f"""Analyze this file for sensitive data exposure vulnerabilities:
 
@@ -108,7 +110,7 @@ Example format:
   }}
 ]
 
-If no vulnerabilities found, return empty array []. Be specific about what sensitive data issues you identify."""
+If no vulnerabilities found, return empty array []. Be specific about what sensitive data issues you identify. Provide detailed descriptions (up to 4 sentences) explaining the vulnerability, its risks, potential impact, and remediation."""
 
     messages = [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
     response = model.invoke(messages)
