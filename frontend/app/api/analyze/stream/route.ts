@@ -20,6 +20,12 @@ async function getRepoFiles(owner: string, repo: string, treeSha = "main") {
   }
   
   const data = await res.json();
+  
+  // Check if the tree was truncated (GitHub API limits to 100,000 entries)
+  if (data.truncated) {
+    console.warn(`GitHub tree was truncated. Only showing first ${data.tree.length} files.`);
+  }
+  
   return data.tree.filter((item: any) => item.type === "blob");
 }
 
@@ -120,8 +126,7 @@ export async function POST(req: NextRequest) {
             const excludeExts = /\.(png|jpg|jpeg|gif|svg|ico|pdf|zip|tar|gz|json|lock|md|txt|xml|yaml|yml|css|scss|less|html|map|ttf|woff|woff2|eot|mp4|webm|mp3)$/;
             const excludeDirs = /(node_modules|dist|build|coverage|\.git|\.next|\.vercel|public|assets|vendor|libs)/;
             return !excludeExts.test(path) && !excludeDirs.test(path);
-          })
-          .slice(0, parseInt(process.env.MAX_FILES_TO_ANALYZE || "10"));
+          });
 
         sendEvent("status", { message: `Analyzing ${codeFiles.length} files...` });
 
