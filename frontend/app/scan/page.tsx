@@ -32,6 +32,14 @@ function ScanContent() {
   useEffect(() => {
     if (!repoUrl) return;
 
+    // Check if the user is authenticated before starting the scan
+    const isAuthenticated = checkUserAuthentication();
+    if (!isAuthenticated) {
+      setScanStatus("Authentication required to perform scan.");
+      setIsLoading(false);
+      return;
+    }
+
     const startScan = async () => {
       // Only use API for full repos, fallback to direct fetch for single files if needed
       if (repoUrl.match(/github\.com\/([^/]+)\/([^/]+)$/)) {
@@ -365,6 +373,13 @@ function ScanContent() {
       </div>
     </div>
   );
+}
+
+// Mock function to simulate authentication check
+function checkUserAuthentication() {
+  // Implement actual authentication check logic here
+  // For now, return true to simulate an authenticated user
+  return true;
 }
 
 export default function ScanPage() {
