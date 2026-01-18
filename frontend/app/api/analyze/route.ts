@@ -182,9 +182,23 @@ export async function POST(req: NextRequest) {
         stderr += data.toString();
       });
 
+      // Handle stdin write errors (EPIPE)
+      pythonProcess.stdin.on("error", (err: any) => {
+        if (err.code !== "EPIPE") {
+          console.error("Python process stdin error:", err);
+        }
+      });
+
       // Write input to stdin
-      pythonProcess.stdin.write(fileStructureJson);
-      pythonProcess.stdin.end();
+      try {
+        pythonProcess.stdin.write(fileStructureJson);
+        pythonProcess.stdin.end();
+      } catch (err: any) {
+        // Handle EPIPE errors when process has already ended
+        if (err.code !== "EPIPE") {
+          console.error("Error writing to Python process:", err);
+        }
+      }
 
       // Wait for process to complete
       await new Promise<void>((resolve, reject) => {
