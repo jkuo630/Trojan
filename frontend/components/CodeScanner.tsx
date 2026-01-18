@@ -232,7 +232,7 @@ export function CodeScanner({
     let frameCount = 0; // Count frames to control speed
 
     const processFrame = () => {
-      const LINES_PER_FRAME = 2; // Lines per frame (fractional = slower)
+      const LINES_PER_FRAME = 3; // Lines per frame (fractional = slower)
       const FRAME_DELAY = Math.ceil(1 / LINES_PER_FRAME); // Process one step every N frames
       
       const container = containerRef.current;

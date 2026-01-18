@@ -1,36 +1,125 @@
 @import "tailwindcss";
 
+/* ---------------------------------------
+   Dark-only design tokens (colors + type)
+   --------------------------------------- */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Base */
+  --background: #0e141a;
+  --foreground: #d6d6d6;
+
+  /* Brand / UI */
+  --blue: #669bcb;
+  --gray: #d6d6d6;
+
+  /* Severity */
+  --sev-low: #f1fa8c;
+  --sev-medium: #f1b24c;
+  --sev-high: #f14c4c;
+
+  /* RGB helpers (useful for opacity with Tailwind arbitrary values) */
+  --background-rgb: 14 20 26;
+  --foreground-rgb: 214 214 214;
+  --blue-rgb: 102 155 203;
+  --gray-rgb: 214 214 214;
+  --sev-low-rgb: 241 250 140;
+  --sev-medium-rgb: 241 178 76;
+  --sev-high-rgb: 241 76 76;
+
+  /* Type scale (Inter) */
+  --font-sans: Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+
+  --fs-1: 16px; /* Inter Bold */
+  --fs-2: 12px; /* Inter Bold */
+  --fs-3: 12px; /* Inter Regular */
+  --fs-4: 10px; /* Inter Regular */
+
+  --fw-regular: 400;
+  --fw-bold: 700;
 }
 
 @theme inline {
+  /* Keep your existing theme wiring */
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
-}
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  /* Optional: expose token colors to theme vars */
+  --color-blue: var(--blue);
+  --color-gray: var(--gray);
+  --color-sev-low: var(--sev-low);
+  --color-sev-medium: var(--sev-medium);
+  --color-sev-high: var(--sev-high);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans);
+}
+
+/* ---------------------------------------
+   Semantic classes for standardized text
+   --------------------------------------- */
+@layer components {
+  /* Typography presets */
+  .text-1 {
+    font-size: var(--fs-1);
+    font-weight: var(--fw-bold);
+    font-family: var(--font-sans);
+  }
+
+  .text-2 {
+    font-size: var(--fs-2);
+    font-weight: var(--fw-bold);
+    font-family: var(--font-sans);
+  }
+
+  .text-3 {
+    font-size: var(--fs-3);
+    font-weight: var(--fw-regular);
+    font-family: var(--font-sans);
+  }
+
+  .text-4 {
+    font-size: var(--fs-4);
+    font-weight: var(--fw-regular);
+    font-family: var(--font-sans);
+  }
+
+  /* Optional helpers */
+  .text-blue {
+    color: var(--blue);
+  }
+
+  .text-gray {
+    color: var(--gray);
+  }
+
+  /* Severity pill helpers (use with rounded-full px-3 py-1 italic etc.) */
+  .pill-low {
+    background: color-mix(in srgb, var(--sev-low) 20%, transparent);
+    color: var(--sev-low);
+  }
+
+  .pill-medium {
+    background: color-mix(in srgb, var(--sev-medium) 20%, transparent);
+    color: var(--sev-medium);
+  }
+
+  .pill-high {
+    background: color-mix(in srgb, var(--sev-high) 20%, transparent);
+    color: var(--sev-high);
+  }
 }
 
 /* Hide scrollbars utility class */
 .scrollbar-hide {
-  -ms-overflow-style: none;  /* IE and Edge */
-  scrollbar-width: none;  /* Firefox */
+  -ms-overflow-style: none; /* IE and Edge */
+  scrollbar-width: none; /* Firefox */
 }
 
 .scrollbar-hide::-webkit-scrollbar {
-  display: none;  /* Chrome, Safari and Opera */
+  display: none; /* Chrome, Safari and Opera */
 }

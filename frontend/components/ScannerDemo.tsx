@@ -2,8 +2,10 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { CodeScanner, type CodeAnnotation } from "@/components/CodeScanner";
-import { FileCode, ShieldAlert, CheckCircle, AlertTriangle, FileText, ChevronRight, Terminal, Cpu, Activity } from "lucide-react";
+import { FileCode, ShieldAlert, CheckCircle, AlertTriangle, FileText, ChevronRight, Terminal, Cpu, Activity, RotateCw, X } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
 
 const scanLogs: { line: number; message: string }[] = [];
 
@@ -39,6 +41,7 @@ export default function ScannerDemo({
   scanStatus = "",
   currentFilePath = ""
 }: ScannerDemoProps) {
+  const router = useRouter();
   const [foundIssues, setFoundIssues] = useState<CodeAnnotation[]>([]);
   const [logs, setLogs] = useState<string[]>([]);
   const logsEndRef = useRef<HTMLDivElement>(null);
@@ -195,25 +198,79 @@ export default function ScannerDemo({
 
   const currentFileName = repoFiles ? repoFiles[currentFileIndex]?.name : "";
 
-  // Filter vulnerabilities: only show ones that have been scanned AND match severity filter
+  // Filter vulnerabilities: show all vulnerabilities across all files
+  // Only apply scannedLineIndex filter for the current file being scanned
   const filteredVulnerabilities = authVulnerabilities.filter((vuln: any) => {
-    // Only show vulnerabilities for lines that have been scanned
-    // Line numbers are 1-indexed, scannedLineIndex is 0-indexed
-    if (vuln.line !== null && vuln.line !== undefined) {
+    // Determine which file this vulnerability belongs to
+    const vulnPath = vuln.location || vuln.file_path || "";
+    const currentFilePathForMatch = currentFilePath || repoFiles?.[currentFileIndex]?.path || "";
+    const fileName = currentFilePathForMatch.split("/").pop() || repoFiles?.[currentFileIndex]?.name || "";
+    const isCurrentFile = vulnPath.includes(fileName) || vulnPath === currentFilePathForMatch || 
+                         (vuln.file_index !== undefined && vuln.file_index === currentFileIndex);
+    
+    // For the current file being scanned, only show vulnerabilities for lines that have been scanned
+    // For other files (completed or pending), show all vulnerabilities
+    if (isCurrentFile && vuln.line !== null && vuln.line !== undefined) {
       const vulnLineIndex = vuln.line - 1; // Convert to 0-indexed
       // #region agent log
       fetch('http://127.0.0.1:7242/ingest/d7ed34c7-a4a6-4f15-8a74-de07d29ed0ca',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ScannerDemo.tsx:180',message:'Filtering vulnerability',data:{vulnLine:vuln.line,vulnLineIndex,scannedLineIndex,willShow:vulnLineIndex<=scannedLineIndex},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
       // #endregion
       if (vulnLineIndex > scannedLineIndex) {
-        return false; // Haven't scanned this line yet
+        return false; // Haven't scanned this line yet in current file
       }
     }
+    // For other files, show all vulnerabilities (no line filtering)
     
     // Apply severity filter
     if (vulnFilter === "all") return true;
     const severity = (vuln.severity?.toLowerCase() || "medium");
     return severity === vulnFilter;
   });
+
+  // Get the highest severity vulnerability for a file
+  const getFileVulnerabilitySeverity = (fileIndex: number): "high" | "medium" | "low" | null => {
+    const file = repoFiles?.[fileIndex];
+    if (!file) return null;
+
+    // Check file's own vulnerabilities
+    const fileVulns = file.vulnerabilities || [];
+    
+    // Check auth vulnerabilities for this file
+    const filePath = file.path || "";
+    const fileName = file.name || "";
+    const authVulnsForFile = authVulnerabilities.filter((vuln: any) => {
+      const vulnPath = vuln.location || vuln.file_path || "";
+      return vulnPath.includes(fileName) || vulnPath === filePath || 
+             (vuln.file_index !== undefined && vuln.file_index === fileIndex);
+    });
+
+    // Combine all vulnerabilities
+    const allVulns = [...fileVulns, ...authVulnsForFile];
+    
+    if (allVulns.length === 0) return null;
+
+    // Determine highest severity
+    let hasHigh = false;
+    let hasMedium = false;
+    let hasLow = false;
+
+    allVulns.forEach((vuln: any) => {
+      const severity = (vuln.severity?.toLowerCase() || 
+                       (vuln.type === "error" ? "high" : "low"));
+      if (severity === "high" || severity === "critical") {
+        hasHigh = true;
+      } else if (severity === "medium") {
+        hasMedium = true;
+      } else {
+        hasLow = true;
+      }
+    });
+
+    if (hasHigh) return "high";
+    if (hasMedium) return "medium";
+    if (hasLow) return "low";
+    return null;
+  };
 
   // Get agent activity message from scanStatus
   const getAgentMessage = () => {
@@ -230,15 +287,40 @@ export default function ScannerDemo({
     return "Analyzing code for security vulnerabilities.";
   };
 
+  // Check if scan is complete
+  const isScanComplete = repoFiles && repoFiles.length > 0 && completedFiles.size === repoFiles.length;
+  
+  // Calculate vulnerability counts by severity
+  const getVulnerabilityCounts = () => {
+    const counts = { low: 0, medium: 0, high: 0, total: 0 };
+    
+    authVulnerabilities.forEach((vuln: any) => {
+      const severity = (vuln.severity?.toLowerCase() || "medium");
+      counts.total++;
+      if (severity === "high" || severity === "critical") {
+        counts.high++;
+      } else if (severity === "low") {
+        counts.low++;
+      } else {
+        counts.medium++;
+      }
+    });
+    
+    return counts;
+  };
+
+  const vulnerabilityCounts = getVulnerabilityCounts();
+
   return (
     <main className="flex h-full w-full bg-[#0E141A] text-white overflow-hidden flex-col">
-      <div className="flex-1 flex min-h-0 items-start gap-6 pt-0 px-8 overflow-hidden" style={{ boxSizing: 'border-box' }}>
+      <div className="flex-1 flex min-h-0 items-start gap-2 pt-0 px-8 overflow-hidden" style={{ boxSizing: 'border-box' }}>
+        {/* Left Side - File Path Bar and Code Viewer */}
         <div className="flex flex-col flex-1 min-w-0 min-h-0" style={{ boxSizing: 'border-box' }}>
           {/* File Path Bar with Scanning Button and Severity - Above Code Box */}
           {currentFilePath && (
             <div className="h-7.5 bg-[#0E141A] flex items-center justify-between flex-shrink-0 mb-0">
               <div className="flex items-center gap-2">
-                <div className="h-2.5 w-2.5 rounded-full bg-[#6699C9]"></div>
+                <div className="h-2 w-2 rounded-full bg-[#6699C9]"></div>
                 <span className="text-sm bg-gradient-to-r from-[#6699C9] to-[#6699C9]/40 bg-clip-text text-transparent">{currentFilePath}</span>
                 <div className="flex items-center gap-1.5 rounded-lg bg-[#344F67]/40 px-1.5 py-0.2">
                   <img src="/scan.svg" alt="scan" className="h-3 w-3" />
@@ -249,15 +331,15 @@ export default function ScannerDemo({
                 <span className="text-xs text-[#D6D6D6] text-opacity-60 font-bold">Severity</span>
                 <div className="flex items-center gap-3">
                   <div className="flex items-center gap-1.5">
-                    <div className="h-2.5 w-2.5 rounded-full bg-[#F1FA8C]"></div>
+                    <div className="h-2 w-2 rounded-full bg-[#F1FA8C]"></div>
                     <span className="text-xs text-[#D6D6D6] text-opacity-60">Low</span>
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <div className="h-2.5 w-2.5 rounded-full bg-[#F1B24C]"></div>
+                    <div className="h-2 w-2 rounded-full bg-[#F1B24C]"></div>
                     <span className="text-xs text-[#D6D6D6] text-opacity-60">Medium</span>
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <div className="h-2.5 w-2.5 rounded-full bg-[#F14C4C]"></div>
+                    <div className="h-2 w-2 rounded-full bg-[#F14C4C]"></div>
                     <span className="text-xs text-[#D6D6D6] text-opacity-60">High</span>
                   </div>
                 </div>
@@ -265,7 +347,7 @@ export default function ScannerDemo({
             </div>
           )}
           {/* Left Sidebar and Code Section in One Box */}
-          <div className="flex border border-[#D6D6D6] overflow-hidden" style={{ boxSizing: 'border-box', height: currentFilePath ? 'calc(100vh - 64px - 230px)' : 'calc(100vh - 96px - 234px)' }}>
+          <div className="flex border border-[#D6D6D6] overflow-hidden" style={{ boxSizing: 'border-box', height: currentFilePath ? 'calc(100vh - 64px - 270px)' : 'calc(100vh - 96px - 214px)' }}>
           {/* Left Sidebar - Suspicious Files */}
           <div className="w-[150px] flex-shrink-0 bg-[#0E141A] flex flex-col">
             <div className="p-3 flex-shrink-0">
@@ -281,6 +363,7 @@ export default function ScannerDemo({
                 const isActive = i === currentFileIndex;
                 const isCompleted = file.status === "completed";
                 const isScanning = file.status === "scanning";
+                const vulnerabilitySeverity = isCompleted ? getFileVulnerabilitySeverity(i) : null;
                 
                 return (
                   <div
@@ -296,7 +379,18 @@ export default function ScannerDemo({
                   >
                     <img src="/file.svg" alt="file" className="h-3 w-3 flex-shrink-0" />
                     <span className="flex-1 truncate">{file.name}</span>
-                    {isCompleted && (
+                    {isCompleted && vulnerabilitySeverity && (
+                      <AlertTriangle 
+                        className={`h-3 w-3 flex-shrink-0 ${
+                          vulnerabilitySeverity === "high" 
+                            ? "text-[#F14C4C]" 
+                            : vulnerabilitySeverity === "medium" 
+                            ? "text-[#F1B24C]" 
+                            : "text-[#F1FA8C]"
+                        }`} 
+                      />
+                    )}
+                    {isCompleted && !vulnerabilitySeverity && (
                       <CheckCircle className="h-3 w-3 flex-shrink-0 text-[#4CF177]" />
                     )}
                     {isActive && !isCompleted && (
@@ -323,7 +417,7 @@ export default function ScannerDemo({
               onScanStart={onScanStart}
               onScanComplete={onScanComplete}
               onScanProgress={handleScanProgress}
-              skipAnimation={false}
+              skipAnimation={completedFiles.has(currentFileIndex)}
             />
           </div>
         </div>
@@ -331,33 +425,37 @@ export default function ScannerDemo({
         </div>
 
         {/* Right Sidebar - Vulnerabilities */}
-        <div className="w-[280px] flex-shrink-0 bg-[#0E141A] flex flex-col overflow-hidden">
-          <div className="p-4 flex-shrink-0">
-            <h2 className="text-xs font-semibold text-white">Vulnerabilities</h2>
+        <div className="w-[320px] flex-shrink-0 bg-[#0E141A] flex flex-col overflow-hidden relative" style={{ 
+          height: currentFilePath ? 'calc(100vh - 64px - 250px)' : 'calc(100vh - 96px - 250px)',
+        }}>
+          <div className="px-4 flex-shrink-0">
+            <h2 className="text-lg font-bold text-[#6699C9]">Vulnerabilities</h2>
           </div>
 
           {/* Filter Tabs */}
-          <div className="px-4 py-2 flex items-center gap-2 flex-shrink-0">
-            {(["all", "low", "medium", "high"] as const).map((filter) => (
-              <button
-                key={filter}
-                onClick={() => setVulnFilter(filter)}
-                className={`px-2 py-1 text-[10px] transition-colors ${
-                  vulnFilter === filter
-                    ? "text-white underline underline-offset-4 decoration-2"
-                    : "text-[#D6D6D6] text-opacity-60 hover:text-opacity-100"
-                }`}
-              >
-                {filter.charAt(0).toUpperCase() + filter.slice(1)}
-              </button>
+          <div className="px-4 pb-1 flex items-center gap-0 flex-shrink-0">
+            {(["all", "low", "medium", "high"] as const).map((filter, index) => (
+              <span key={filter} className="flex items-center">
+                <button
+                  onClick={() => setVulnFilter(filter)}
+                  className={`text-[10px] transition-colors cursor-pointer px-1 py-0.5 rounded hover:bg-white/5 ${
+                    vulnFilter === filter
+                      ? "text-white font-bold underline underline-offset-4 decoration-2"
+                      : "text-[#D6D6D6] text-opacity-60 hover:text-opacity-100"
+                  }`}
+                >
+                  {filter.charAt(0).toUpperCase() + filter.slice(1)}
+                </button>
+                {index < 3 && <span className="text-[#D6D6D6] text-opacity-60 mx-1">|</span>}
+              </span>
             ))}
           </div>
 
           {/* Vulnerabilities List */}
-          <div className="flex-1 overflow-y-auto scrollbar-hide p-4">
+          <div className="flex-1 overflow-y-auto scrollbar-hide px-4 pb-4 pt-1 min-h-0">
             <div className="space-y-3">
               <AnimatePresence mode="popLayout">
-                {filteredVulnerabilities.map((vuln: any, i: number) => {
+                {[...filteredVulnerabilities].reverse().map((vuln: any, i: number) => {
                   const severity = (vuln.severity?.toLowerCase() || "medium");
                   const isHigh = severity === "high" || severity === "critical";
                   const isLow = severity === "low";
@@ -369,25 +467,34 @@ export default function ScannerDemo({
                   return (
                     <motion.div
                       key={`auth-${i}-${vuln.location}-${vuln.line || 0}`}
-                      initial={{ opacity: 0, y: 10 }}
+                      initial={{ opacity: 0, y: -10 }}
                       animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0, scale: 0.95 }}
-                      className="rounded-lg border border-[#D1D1D1] bg-[#0E141A] p-3"
+                      className="border border-[#D1D1D1] bg-[#0E141A] p-3"
                     >
-                      <h3 className="text-xs font-medium text-white mb-2">
+                      <h3 className="text-[11px] font-medium text-white mb-2">
                         {vuln.type || "Authentication Vulnerability"}
                       </h3>
                       <div className="flex items-center gap-2 mb-2">
-                        <AlertTriangle className={`h-3 w-3 ${isLow ? "text-[#F1FA8C]" : severityColor}`} />
-                        <span className={`text-[10px] ${isLow ? "text-[#4CF177]" : severityColor}`}>
+                        <AlertTriangle className={`h-3.5 w-3.5 flex-shrink-0 ${isLow ? "text-[#F1FA8C]" : severityColor}`} />
+                        <span 
+                          className={`inline-block rounded-md px-1.5 py-0.25 text-[10px] italic text-left whitespace-nowrap ${isLow ? "text-[#F1FA8C]" : severityColor}`}
+                          style={{
+                            backgroundColor: isHigh 
+                              ? "rgb(241 76 76 / 0.25)" 
+                              : isLow 
+                              ? "rgb(241 250 140 / 0.25)" 
+                              : "rgb(241 178 76 / 0.25)"
+                          }}
+                        >
                           {severityText} Severity Vulnerability
                         </span>
                       </div>
-                      <p className="text-[10px] text-[#D6D6D6] mb-2">
+                      <p className="text-[10px] mb-2" style={{ color: "rgb(214 214 214 / 0.60)" }}>
                         {vuln.description || "No description available"}
                       </p>
                       <div className="flex items-center gap-1.5 text-[10px] text-[#D6D6D6] text-opacity-60">
-                        <FileText className="h-3 w-3" />
+                        <FileText className="h-3.5 w-3.5" />
                         <span>
                           {vuln.location || vuln.file_path || "Unknown file"}
                           {vuln.line && ` (Line ${vuln.line})`}
@@ -413,21 +520,54 @@ export default function ScannerDemo({
               )}
             </div>
           </div>
+          {/* Gradient fade at bottom - fixed at container bottom */}
+          <div className="absolute bottom-0 left-0 right-0 h-12 pointer-events-none bg-gradient-to-t from-[#0E141A] to-transparent z-10"></div>
         </div>
       </div>
 
-      {/* Footer - Agent Activity */}
-      <div className="flex-shrink-0 min-h-[170px] py-8 flex items-center justify-between px-8">
-        <div className="flex-1">
-          <div className="flex items-center gap-2 text-sm text-[#D6D6D6]">
-            <span>{getAgentMessage()}</span>
-            <ChevronRight className="h-4 w-4 text-[#D6D6D6] text-opacity-60" />
-          </div>
-          <p className="text-xs text-[#D6D6D6] text-opacity-60 mt-2">{getAgentSubMessage()}</p>
-        </div>
-        <button className="text-sm text-[#D6D6D6] text-opacity-60 hover:text-[#D6D6D6] hover:opacity-100 transition-colors underline underline-offset-2">
-          View Full Logs
-        </button>
+      {/* Footer - Agent Activity or Summary */}
+      <div className="flex-shrink-0 min-h-[200px] py-8 flex items-center justify-between px-8">
+        {isScanComplete ? (
+          <>
+            <div className="flex-1">
+              <h2 className="text-lg font-semibold text-[#6699C9] mb-2">Summary</h2>
+              <p className="text-sm text-[#D6D6D6] text-opacity-60">
+                {vulnerabilityCounts.total} Vulnerabilities, {vulnerabilityCounts.low} Low, {vulnerabilityCounts.medium} Medium, {vulnerabilityCounts.high} High
+              </p>
+            </div>
+            <div className="flex flex-col gap-3 items-end">
+              <button 
+                onClick={() => window.location.reload()} 
+                className="text-sm text-[#6699C9] hover:text-[#6699C9]/80 transition-colors underline underline-offset-2 flex items-center gap-1.5 cursor-pointer"
+              >
+                <RotateCw className="h-4 w-4" />
+                <span>Re-run</span>
+                <ChevronRight className="h-4 w-4" />
+              </button>
+              <Link 
+                href="/"
+                className="text-sm text-[#6699C9] hover:text-[#6699C9]/80 transition-colors underline underline-offset-2 flex items-center gap-1.5 cursor-pointer"
+              >
+                <X className="h-4 w-4" />
+                <span>Exit</span>
+                <ChevronRight className="h-4 w-4" />
+              </Link>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="flex-1">
+              <div className="flex items-center gap-2 text-sm text-[#D6D6D6]">
+                <span>{getAgentMessage()}</span>
+                <ChevronRight className="h-4 w-4 text-[#D6D6D6] text-opacity-60" />
+              </div>
+              <p className="text-xs text-[#D6D6D6] text-opacity-60 mt-2">{getAgentSubMessage()}</p>
+            </div>
+            <button className="text-sm text-[#D6D6D6] text-opacity-60 hover:text-[#D6D6D6] hover:opacity-100 transition-colors underline underline-offset-2">
+              View Full Logs
+            </button>
+          </>
+        )}
       </div>
     </main>
   );

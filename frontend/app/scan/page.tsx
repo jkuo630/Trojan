@@ -57,45 +57,78 @@ function ScanContent() {
           
           console.log("Starting scan for URL:", cleanUrl);
           
-          const res = await fetch("/api/analyze/stream", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ url: cleanUrl }),
-          });
+          let res;
+          try {
+            res = await fetch("/api/analyze/stream", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ url: cleanUrl }),
+            });
+          } catch (fetchError) {
+            // Handle network errors (CORS, connection refused, DNS errors, etc.)
+            console.error("Network error fetching stream:", fetchError);
+            const errorMessage = fetchError instanceof Error 
+              ? fetchError.message 
+              : "Network error";
+            setScanStatus(`Failed to connect to analysis service: ${errorMessage}. Please check your connection and try again.`);
+            setIsLoading(false);
+            return;
+          }
 
-          if (!res.ok) {
-            const errorText = await res.text();
-            console.error("API Error:", res.status, errorText);
-            throw new Error(`Analysis failed: ${res.status} ${errorText}`);
+          if (!res || !res.ok) {
+            const errorText = res ? await res.text().catch(() => "Unknown error") : "No response from server";
+            console.error("API Error:", res?.status || "No status", errorText);
+            setScanStatus(`Analysis failed: ${res?.status || "Connection error"} - ${errorText}`);
+            setIsLoading(false);
+            return;
           }
 
           const reader = res.body?.getReader();
           const decoder = new TextDecoder();
 
           if (!reader) {
-            throw new Error("Stream not available");
+            setScanStatus("Error: Stream not available. Please try again.");
+            setIsLoading(false);
+            return;
           }
           
           console.log("Stream started, reading events...");
 
           let buffer = "";
 
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
+          try {
+            while (true) {
+              let readResult;
+              try {
+                readResult = await reader.read();
+              } catch (readError) {
+                console.error("Error reading from stream:", readError);
+                setScanStatus(`Error reading stream: ${readError instanceof Error ? readError.message : "Unknown error"}`);
+                setIsLoading(false);
+                return;
+              }
 
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split("\n\n");
-            buffer = lines.pop() || "";
+              const { done, value } = readResult;
+              if (done) break;
 
-            for (const line of lines) {
-              if (!line.trim()) continue;
+              buffer += decoder.decode(value, { stream: true });
+              const lines = buffer.split("\n\n");
+              buffer = lines.pop() || "";
 
-              const match = line.match(/^event: (\w+)\ndata: ([\s\S]+)$/);
-              if (!match) continue;
+              for (const line of lines) {
+                if (!line.trim()) continue;
 
-              const eventType = match[1];
-              const eventData = JSON.parse(match[2]);
+                const match = line.match(/^event: (\w+)\ndata: ([\s\S]+)$/);
+                if (!match) continue;
+
+                const eventType = match[1];
+                let eventData;
+                try {
+                  eventData = JSON.parse(match[2]);
+                } catch (parseError) {
+                  console.error("Error parsing event data:", parseError, "Line:", line);
+                  continue;
+                }
 
               switch (eventType) {
                 case "status":
@@ -208,6 +241,31 @@ function ScanContent() {
                       reason: f.reason || "",
                     }));
                     setRepoFiles(files);
+                    // Mark all files as complete EXCEPT the last file
+                    // The last file will be marked complete when its animation finishes naturally
+                    setCompletedFiles(prev => {
+                      const newSet = new Set(prev);
+                      const lastFileIndex = files.length - 1;
+                      
+                      // Mark all files as complete except the last one
+                      files.forEach((_: any, index: number) => {
+                        if (index !== lastFileIndex) {
+                          newSet.add(index);
+                        }
+                      });
+                      
+                      return newSet;
+                    });
+                    
+                    // Ensure the last file is switched to if it hasn't been scanned yet
+                    const lastFileIndex = files.length - 1;
+                    if (!completedFiles.has(lastFileIndex) && currentFileIndex !== lastFileIndex) {
+                      // Switch to the last file so it can be fetched and scanned
+                      setTimeout(() => {
+                        setCurrentFileIndex(lastFileIndex);
+                        setCurrentCode(null); // Clear code to trigger fetch
+                      }, 100);
+                    }
                   }
                   if (eventData.auth_vulnerabilities) {
                     setAuthVulnerabilities(eventData.auth_vulnerabilities);
@@ -221,7 +279,13 @@ function ScanContent() {
                   setIsLoading(false);
                   break;
               }
+              }
             }
+          } catch (streamError) {
+            console.error("Error processing stream:", streamError);
+            setScanStatus(`Stream processing error: ${streamError instanceof Error ? streamError.message : "Unknown error"}`);
+            setIsLoading(false);
+            return;
           }
           
           setIsLoading(false);
@@ -237,8 +301,18 @@ function ScanContent() {
           .replace("/blob/", "/");
         
         fetch(rawUrl)
-          .then(res => res.text())
-          .then(text => setCurrentCode(text));
+          .then(res => {
+            if (!res.ok) {
+              throw new Error(`Failed to fetch file: ${res.status}`);
+            }
+            return res.text();
+          })
+          .then(text => setCurrentCode(text))
+          .catch(err => {
+            console.error("Failed to fetch blob content:", err);
+            setCurrentCode("// Error: Could not load file content");
+            setScanStatus("Failed to load file content. Please check the URL.");
+          });
       }
     };
 
@@ -288,6 +362,13 @@ function ScanContent() {
         const proxyUrl = `/api/github/file?owner=${encodeURIComponent(owner)}&repo=${encodeURIComponent(repo)}&path=${encodeURIComponent(file.path)}`;
         const directUrl = `https://raw.githubusercontent.com/${owner}/${repo}/main/${file.path}`;
         
+        // Validate file path before fetching
+        if (!file.path || file.path.trim() === "") {
+          console.error("Invalid file path:", file.path);
+          setCurrentCode("// Error: Invalid file path");
+          return;
+        }
+        
         // Try proxy first
         fetch(proxyUrl)
           .then(res => {
@@ -307,19 +388,28 @@ function ScanContent() {
             isScanningAnimationRef.current = true;
             setIsScanningAnimation(true);
           })
-          .catch(proxyErr => {
+          .catch((proxyErr: any) => {
+            // Handle network errors specifically
+            if (proxyErr instanceof TypeError && proxyErr.message === "Failed to fetch") {
+              console.error("Network error fetching from proxy:", proxyErr);
+            }
             // #region agent log
             fetch('http://127.0.0.1:7242/ingest/d7ed34c7-a4a6-4f15-8a74-de07d29ed0ca',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'scan/page.tsx:315',message:'Proxy failed, trying direct URL',data:{error:proxyErr.message,fileIndex:currentFileIndex},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
             // #endregion
             // Fallback to direct GitHub URL
-            return fetch(directUrl)
+            fetch(directUrl)
               .then(res => {
                 if (!res.ok) {
                   return fetch(directUrl.replace('/main/', '/master/'));
                 }
                 return res;
               })
-              .then(res => res.text())
+              .then(res => {
+                if (!res.ok) {
+                  throw new Error(`Failed to fetch: ${res.status}`);
+                }
+                return res.text();
+              })
               .then(text => {
                 // #region agent log
                 fetch('http://127.0.0.1:7242/ingest/d7ed34c7-a4a6-4f15-8a74-de07d29ed0ca',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'scan/page.tsx:325',message:'Code fetched via direct URL and set',data:{fileIndex:currentFileIndex,codeLength:text?.length||0},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
@@ -328,13 +418,55 @@ function ScanContent() {
                 isScanningAnimationRef.current = true;
                 setIsScanningAnimation(true);
               })
-              .catch(err => {
+              .catch((err: any) => {
                 // #region agent log
                 fetch('http://127.0.0.1:7242/ingest/d7ed34c7-a4a6-4f15-8a74-de07d29ed0ca',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'scan/page.tsx:332',message:'Failed to fetch file content from both proxy and direct URL',data:{error:err.message,fileIndex:currentFileIndex,filePath:file.path},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
                 // #endregion
                 console.error("Failed to fetch file content", err);
-                setCurrentCode("// Error: Could not load file content");
+                // Handle network errors specifically
+                if (err instanceof TypeError && err.message === "Failed to fetch") {
+                  setCurrentCode(`// Error: Network error - could not load file content\n// File: ${file.path}\n// Please check your connection and try again`);
+                } else {
+                  setCurrentCode(`// Error: Could not load file content\n// File: ${file.path}\n// ${err.message || "Unknown error"}`);
+                }
               });
+          })
+          .catch((networkErr: any) => {
+            // Catch network errors from the proxy fetch
+            console.error("Network error fetching from proxy:", networkErr);
+            // Handle network errors - if it's a network error, try direct URL
+            if (networkErr instanceof TypeError && networkErr.message === "Failed to fetch") {
+              // Try direct URL as fallback
+              fetch(directUrl)
+                .then(res => {
+                  if (!res.ok) {
+                    return fetch(directUrl.replace('/main/', '/master/'));
+                  }
+                  return res;
+                })
+                .then(res => {
+                  if (!res.ok) {
+                    throw new Error(`Failed to fetch: ${res.status}`);
+                  }
+                  return res.text();
+                })
+                .then(text => {
+                  setCurrentCode(text || "// Error: Could not load file content");
+                  isScanningAnimationRef.current = true;
+                  setIsScanningAnimation(true);
+                })
+                .catch((err: any) => {
+                  console.error("Failed to fetch file content from all sources:", err);
+                  if (err instanceof TypeError && err.message === "Failed to fetch") {
+                    setCurrentCode(`// Error: Network error - could not load file content\n// File: ${file.path}\n// Please check your connection and try again`);
+                  } else {
+                    setCurrentCode(`// Error: Could not load file content\n// File: ${file.path}\n// ${err.message || "Unknown error"}`);
+                  }
+                });
+            } else {
+              // Non-network error from proxy, show error message
+              setCurrentCode(`// Error: Could not load file content\n// File: ${file.path}\n// ${networkErr.message || "Unknown error"}`);
+            }
           });
       }
     }
@@ -413,9 +545,9 @@ function ScanContent() {
         <div className="py-4 flex items-center justify-between px-8">
           <div className="flex items-center gap-3">
             {/* TROJAN Logo */}
-            <div className="flex items-center gap-2">
+            <Link href="/" className="flex items-center gap-2 cursor-pointer hover:opacity-80 transition-opacity">
               <img src="/trojan.svg" alt="Trojan" className="h-14 w-auto" />
-            </div>
+            </Link>
           </div>
           <div className="flex flex-col items-end gap-1">
             {/* Project Name with GitHub icon */}
