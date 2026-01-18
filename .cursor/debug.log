@@ -1,0 +1,2 @@
+{"location":"scan/page.tsx:230","message":"File fetch effect triggered","data":{"repoFilesLength":0,"currentFileIndex":0,"lastFetched":-1,"hasFile":false},"timestamp":1768751102275,"sessionId":"debug-session","runId":"run1","hypothesisId":"C"}
+{"location":"scan/page.tsx:230","message":"File fetch effect triggered","data":{"repoFilesLength":0,"currentFileIndex":0,"lastFetched":-1,"hasFile":false},"timestamp":1768751102283,"sessionId":"debug-session","runId":"run1","hypothesisId":"C"}
