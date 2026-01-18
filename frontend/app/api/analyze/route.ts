@@ -139,8 +139,9 @@ export async function POST(req: NextRequest) {
 
     const processedFiles = (await Promise.all(processPromises)).filter(Boolean);
 
-    // 4. Call LangGraph agent to identify suspicious files
+    // 4. Call LangGraph agent to identify suspicious files and analyze auth vulnerabilities
     let suspiciousFiles: any[] = [];
+    let authVulnerabilities: any[] = [];
     try {
       const agentScriptPath = path.join(
         process.cwd(),
@@ -188,13 +189,32 @@ export async function POST(req: NextRequest) {
         pythonProcess.on("error", reject);
       });
 
-      // Parse the output
+      // Parse the output (now includes both suspicious_files and auth_vulnerabilities)
       if (stdout) {
         try {
-          suspiciousFiles = JSON.parse(stdout.trim());
-        } catch (parseError) {
+          const output = JSON.parse(stdout.trim());
+          // Handle both old format (array) and new format (object)
+          if (Array.isArray(output)) {
+            // Old format - just suspicious files array
+            suspiciousFiles = output;
+            authVulnerabilities = [];
+          } else if (output.error) {
+            // Error response
+            throw new Error(output.error);
+          } else {
+            // New format - object with suspicious_files and auth_vulnerabilities
+            suspiciousFiles = output.suspicious_files || [];
+            authVulnerabilities = output.auth_vulnerabilities || [];
+          }
+        } catch (parseError: any) {
+          // If parsing fails, check if it's an error message
+          if (stdout.includes("error") || stdout.includes("Error") || stdout.includes("quota")) {
+            console.error("Agent returned error:", stdout);
+            throw new Error(stdout.trim());
+          }
           console.error("Failed to parse agent output:", stdout);
           suspiciousFiles = [];
+          authVulnerabilities = [];
         }
       }
 
@@ -202,7 +222,8 @@ export async function POST(req: NextRequest) {
       console.log("\n=== SECURITY RISK ASSESSMENT ===");
       console.log(`Repository: ${owner}/${repo}`);
       console.log(`Total files analyzed: ${processedFiles.length}`);
-      console.log(`Suspicious files found: ${suspiciousFiles.length}\n`);
+      console.log(`Suspicious files found: ${suspiciousFiles.length}`);
+      console.log(`Auth vulnerabilities found: ${authVulnerabilities.length}\n`);
 
       if (suspiciousFiles.length > 0) {
         suspiciousFiles.forEach((file: any, index: number) => {
@@ -216,6 +237,20 @@ export async function POST(req: NextRequest) {
         });
       } else {
         console.log("No suspicious files identified.\n");
+      }
+
+      if (authVulnerabilities.length > 0) {
+        console.log("\n=== AUTHENTICATION VULNERABILITIES ===");
+        authVulnerabilities.forEach((vuln: any, index: number) => {
+          console.log(`${index + 1}. ${vuln.type || "Unknown"}`);
+          console.log(`   Severity: ${vuln.severity || "unknown"}`);
+          console.log(`   Location: ${vuln.location || "Unknown"}`);
+          console.log(`   Description: ${vuln.description || "No description"}`);
+          if (vuln.line) {
+            console.log(`   Line: ${vuln.line}`);
+          }
+          console.log("");
+        });
       }
       console.log("================================\n");
 
@@ -260,10 +295,11 @@ export async function POST(req: NextRequest) {
       // Continue even if save fails
     }
 
-    // Return both file structure and suspicious files, plus project ID if saved
+    // Return file structure, suspicious files, auth vulnerabilities, plus project ID if saved
     return NextResponse.json({
       file_structure: processedFiles,
       suspicious_files: suspiciousFiles,
+      auth_vulnerabilities: authVulnerabilities,
       project_id: projectId,
     });
 
