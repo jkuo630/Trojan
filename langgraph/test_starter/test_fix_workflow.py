@@ -93,7 +93,7 @@ EXAMPLE_RATE_LIMITING = FixRequest(
 
 def main():
     """Command-line interface for testing."""
-    print("🔒 Security Fix Request Handler")
+    print("Security Fix Request Handler")
     print("="*70)
     
     # Use the example fix request
@@ -110,22 +110,22 @@ def main():
     
     # Display results
     print("\n" + "="*70)
-    print("📊 RESULT")
+    print("RESULT")
     print("="*70)
     
     if result["success"]:
-        print("✅ SUCCESS! Security fix PR created.")
-        print(f"\n🌿 Branch: {result['branch_name']}")
+        print("SUCCESS! Security fix PR created.")
+        print(f"\nBranch: {result['branch_name']}")
         print(f"📝 Commit: {result['commit_sha'][:10]}...")
-        print(f"🔃 PR #{result['pr_number']}")
+        print(f"PR #{result['pr_number']}")
         print(f"📋 Title: {result['pr_title']}")
-        print(f"\n🔗 View PR: {result['pr_url']}")
+        print(f"\nView PR: {result['pr_url']}")
         print("\n💡 Next steps:")
         print("   1. Review the PR on GitHub")
         print("   2. Check the code changes")
         print("   3. Merge if everything looks good!")
     else:
-        print(f"❌ FAILED at step: {result.get('step', 'unknown')}")
+        print(f"FAILED at step: {result.get('step', 'unknown')}")
         print(f"   Error: {result['error']}")
         print("\n💡 Troubleshooting:")
         print("   - Ensure GITHUB_TOKEN and OPENAI_API_KEY are set")
