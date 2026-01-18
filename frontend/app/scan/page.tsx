@@ -263,7 +263,41 @@ function ScanContent() {
                   });
                   break;
 
+                case "suspicious_files_partial":
+                  // Accumulate partial results from batch processing
+                  if (Array.isArray(eventData) && eventData.length > 0) {
+                    setRepoFiles(prev => {
+                      // Convert existing repoFiles back to raw format for deduplication
+                      const prevRaw = prev.map(f => ({
+                        file_path: f.path,
+                        suspicious_functions: f.functions,
+                        risk_level: f.riskLevel,
+                        reason: f.reason
+                      }));
+                      const combined = [...prevRaw, ...eventData];
+                      // Remove duplicates based on file_path
+                      const unique = combined.filter((file, index, self) =>
+                        index === self.findIndex(f => f.file_path === file.file_path)
+                      );
+                      
+                      // Update UI with accumulated results
+                      const mappedFiles = unique.map((f: any) => ({
+                        name: f.file_path?.split("/").pop() || "Unknown",
+                        path: f.file_path || "",
+                        functions: f.suspicious_functions || [],
+                        riskLevel: f.risk_level || "unknown",
+                        reason: f.reason || "",
+                      }));
+                      setIsLoading(false);
+                      setScanStatus(`Found ${unique.length} suspicious file(s) so far... Analyzing batches...`);
+                      
+                      return mappedFiles;
+                    });
+                  }
+                  break;
+
                 case "suspicious_files":
+                  // Final combined results from all batches
                   if (Array.isArray(eventData) && eventData.length > 0) {
                     const mappedFiles = eventData.map((f: any) => ({
                       name: f.file_path?.split("/").pop() || "Unknown",

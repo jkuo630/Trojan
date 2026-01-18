@@ -175,17 +175,17 @@ def main():
     print("="*60)
     
     if result["success"]:
-        print("✅ SUCCESS!")
-        print(f"\n📊 Summary:")
+        print("SUCCESS!")
+        print(f"\nSummary:")
         print(f"   - Vulnerabilities Fixed: {result['vulnerabilities_fixed']}")
         print(f"   - Branch: {result['branch_name']}")
         print(f"   - PR Number: #{result['pr_number']}")
         print(f"   - PR Title: {result['pr_title']}")
-        print(f"\n🔗 Pull Request URL:")
+        print(f"\nPull Request URL:")
         print(f"   {result['pr_url']}")
     else:
-        print("❌ FAILED")
-        print(f"\n⚠️  Error Details:")
+        print("FAILED")
+        print(f"\nError Details:")
         print(f"   - Step: {result.get('step', 'unknown')}")
         print(f"   - Error: {result.get('error', 'unknown error')}")
     

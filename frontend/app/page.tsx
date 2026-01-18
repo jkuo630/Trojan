@@ -6,7 +6,7 @@ import Image from "next/image";
 import { Github, CheckCircle2, ArrowRight } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 
-function LandingPageContent(): JSX.Element {
+function LandingPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [showInput, setShowInput] = useState(false);
