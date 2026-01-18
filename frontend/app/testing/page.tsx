@@ -5,6 +5,8 @@ import * as React from "react";
 import { VulnerabilityCard } from "../../components/Vulnerability";
 import { VulnerabilityPopUp } from "../../components/VulnerabilityPopUp";
 import { mockFindings } from "./MockFindings";
+import { GithubRepoDisplay } from "../../components/GithubRepoDisplay";
+import { mockRepos } from "./MockRepos";
 
 type FixState = "default" | "fixing" | "fixed";
 
@@ -66,8 +68,26 @@ export default function TestingPage() {
     window.__markFixed = () => markFixedFromBackend(selected);
   }, [markFixedFromBackend, selected]);
 
+  const [selectedRepo, setSelectedRepo] = React.useState(0);
+
+{mockRepos.map((r, i) => (
+  <GithubRepoDisplay
+    key={i}
+    data={r}
+    selected={i === selectedRepo}
+    onClick={() => setSelectedRepo(i)} // later: route to next page
+  />
+))}
+
+
   return (
     <main className="min-h-screen bg-slate-950 px-8 py-10">
+        <div className="max-w-xl space-y-6">
+  {mockRepos.map((r, i) => (
+    <GithubRepoDisplay key={i} data={r} />
+  ))}
+</div>
+
       <div className="max-w-4xl space-y-10">
         {/* PopUp mirrors the SELECTED card's state */}
         <div className="max-w-3xl">
