@@ -2,16 +2,17 @@
 
 import { useSearchParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import ScannerDemo from "@/components/ScannerDemo";
 import { Suspense } from "react";
-import { ShieldCheck, Home, FolderOpen } from "lucide-react";
+import { ShieldCheck } from "lucide-react";
 import { motion } from "framer-motion";
+import Link from "next/link";
 
 function ScanContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const repoUrl = searchParams.get("url");
+  const encodedUrl = searchParams.get("url");
+  const repoUrl = encodedUrl ? decodeURIComponent(encodedUrl) : null;
   const [repoFiles, setRepoFiles] = useState<{ 
     name: string; 
     path: string; 
@@ -26,31 +27,45 @@ function ScanContent() {
   const [scanStatus, setScanStatus] = useState<string>("Initializing scan...");
   const [authVulnerabilities, setAuthVulnerabilities] = useState<any[]>([]);
   const [completedFiles, setCompletedFiles] = useState<Set<number>>(new Set());
-  const [isScanningAnimation, setIsScanningAnimation] = useState(false); // Track if animation is in progress
-  const [pendingFileChange, setPendingFileChange] = useState<{fileIndex: number, eventData: any} | null>(null); // Queue next file change
+  const [isScanningAnimation, setIsScanningAnimation] = useState(false);
+  const [pendingFileChange, setPendingFileChange] = useState<{fileIndex: number, eventData: any} | null>(null);
 
   useEffect(() => {
-    if (!repoUrl) return;
+    if (!repoUrl) {
+      setScanStatus("No repository URL provided. Please provide a GitHub repository URL.");
+      setIsLoading(false);
+      return;
+    }
 
     const startScan = async () => {
-      // Only use API for full repos, fallback to direct fetch for single files if needed
-      if (repoUrl.match(/github\.com\/([^/]+)\/([^/]+)$/)) {
+      // Clean the URL - remove trailing slashes, tree/blob paths, etc.
+      const cleanUrl = repoUrl.replace(/\/tree\/.*$/, "").replace(/\/blob\/.*$/, "").replace(/\/$/, "");
+      
+      // More flexible regex to match GitHub URLs
+      const githubMatch = cleanUrl.match(/github\.com\/([^/]+)\/([^/]+)/);
+      
+      if (githubMatch) {
         setIsLoading(true);
         setScanStatus("Scanning repository structure...");
-        setRepoFiles([]); // Clear any previous files
-        setCompletedFiles(new Set()); // Reset completed files
+        setRepoFiles([]);
+        setCompletedFiles(new Set());
         
         try {
           setScanStatus("Analyzing files and identifying suspicious patterns...");
           
-          // Use SSE streaming endpoint for real-time updates
+          console.log("Starting scan for URL:", cleanUrl);
+          
           const res = await fetch("/api/analyze/stream", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ url: repoUrl }),
+            body: JSON.stringify({ url: cleanUrl }),
           });
 
-          if (!res.ok) throw new Error("Analysis failed");
+          if (!res.ok) {
+            const errorText = await res.text();
+            console.error("API Error:", res.status, errorText);
+            throw new Error(`Analysis failed: ${res.status} ${errorText}`);
+          }
 
           const reader = res.body?.getReader();
           const decoder = new TextDecoder();
@@ -58,6 +73,8 @@ function ScanContent() {
           if (!reader) {
             throw new Error("Stream not available");
           }
+          
+          console.log("Stream started, reading events...");
 
           let buffer = "";
 
@@ -67,13 +84,11 @@ function ScanContent() {
 
             buffer += decoder.decode(value, { stream: true });
             const lines = buffer.split("\n\n");
-            buffer = lines.pop() || ""; // Keep incomplete line in buffer
+            buffer = lines.pop() || "";
 
             for (const line of lines) {
               if (!line.trim()) continue;
 
-              // Parse SSE format: "event: type\ndata: {...}\n\n"
-              // Use [\s\S] instead of . with /s flag for compatibility
               const match = line.match(/^event: (\w+)\ndata: ([\s\S]+)$/);
               if (!match) continue;
 
@@ -88,24 +103,18 @@ function ScanContent() {
                   break;
 
                 case "file_analysis_start":
-                  // Backend has analyzed a file and found vulnerabilities - switch frontend to visualize it
                   if (eventData.file_index !== undefined) {
                     const fileIndex = eventData.file_index;
                     
-                    // If animation is still running for current file, queue this file change
                     if (isScanningAnimation && fileIndex !== currentFileIndex) {
                       setPendingFileChange({ fileIndex, eventData });
                       break;
                     }
                     
-                    // Otherwise, switch to this file immediately
-                    // Don't set isScanningAnimation yet - wait for CodeScanner to actually start
                     setCurrentFileIndex(fileIndex);
                     
-                    // Set vulnerabilities immediately (backend already analyzed and found them)
                     if (eventData.vulnerabilities && Array.isArray(eventData.vulnerabilities)) {
                       setAuthVulnerabilities(prev => {
-                        // Remove old vulnerabilities for this file, then add new ones
                         const filtered = prev.filter(v => v.file_path !== eventData.file_path);
                         const newVulns = eventData.vulnerabilities.map((v: any) => ({
                           ...v,
@@ -117,33 +126,25 @@ function ScanContent() {
                     }
                     
                     setScanStatus(`Analyzing ${eventData.file_name || eventData.file_path || "file"}... Found ${eventData.vulnerabilities?.length || 0} vulnerability/vulnerabilities`);
-                    // Clear current code to trigger reload
                     setCurrentCode(null);
                   }
                   break;
 
                 case "file_analysis_complete":
-                  // Backend finished analyzing this file
                   if (eventData.file_index !== undefined) {
                     const fileIndex = eventData.file_index;
-                    // Mark this file as completed
                     setCompletedFiles(prev => new Set(prev).add(fileIndex));
                     setScanStatus(`Completed ${eventData.file_path?.split("/").pop() || "file"} - Found ${eventData.vulnerabilities_found || 0} vulnerability/vulnerabilities`);
                     
-                    // Auto-advance to next file after allowing visualization to complete
-                    // Backend controls the flow - when it's done with one file, we move to next
                     if (fileIndex + 1 < (repoFiles.length || 0)) {
-                      // Small delay to allow visualization to show the results
                       setTimeout(() => {
                         // Next file will start when backend sends file_analysis_start
-                        // We don't auto-advance here - backend will send file_analysis_start for next file
-                      }, 2000); // 2 second pause to show results
+                      }, 2000);
                     }
                   }
                   break;
 
                 case "vulnerability":
-                  // Add new vulnerability in real-time for the current file
                   setAuthVulnerabilities(prev => {
                     const exists = prev.some(v => 
                       v.location === eventData.location && 
@@ -165,7 +166,6 @@ function ScanContent() {
                       reason: f.reason || "",
                     }));
                     setRepoFiles(mappedFiles);
-                    // Start visualization immediately when suspicious files are found
                     setIsLoading(false);
                     setScanStatus(`Found ${mappedFiles.length} suspicious file(s). Analyzing...`);
                   }
@@ -197,7 +197,6 @@ function ScanContent() {
             }
           }
           
-          // Stream ended, ensure loading is false
           setIsLoading(false);
           return;
         } catch (error) {
@@ -206,7 +205,6 @@ function ScanContent() {
           setIsLoading(false);
         }
       } else if (repoUrl.includes("/blob/")) {
-        // Single file logic (unchanged for now)
         const rawUrl = repoUrl
           .replace("github.com", "raw.githubusercontent.com")
           .replace("/blob/", "/");
@@ -230,18 +228,18 @@ function ScanContent() {
         return;
       }
 
-      // Fetch file content from GitHub
-      const match = repoUrl.match(/github\.com\/([^/]+)\/([^/]+)/);
+      // Clean the URL for matching
+      const cleanUrl = repoUrl.replace(/\/tree\/.*$/, "").replace(/\/blob\/.*$/, "").replace(/\/$/, "");
+      const match = cleanUrl.match(/github\.com\/([^/]+)\/([^/]+)/);
       if (match) {
         const [_, owner, repo] = match;
         const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/main/${file.path}`;
         
-        setCurrentCode(null); // Clear while loading
+        setCurrentCode(null);
         
         fetch(rawUrl)
           .then(res => {
             if (!res.ok) {
-              // Try master branch if main fails
               return fetch(rawUrl.replace('/main/', '/master/'));
             }
             return res;
@@ -256,25 +254,19 @@ function ScanContent() {
     }
   }, [repoFiles, currentFileIndex, repoUrl]);
 
-  // Handle scan animation start
   const handleScanStart = () => {
     setIsScanningAnimation(true);
   };
 
-  // Handle scan animation completion
   const handleScanComplete = () => {
-    // Mark animation as complete
     setIsScanningAnimation(false);
     
-    // If there's a pending file change, apply it now
     if (pendingFileChange) {
       const { fileIndex, eventData } = pendingFileChange;
       setPendingFileChange(null);
       
       setCurrentFileIndex(fileIndex);
-      // Don't set isScanningAnimation here - let onScanStart handle it when animation actually starts
       
-      // Set vulnerabilities for the pending file
       if (eventData.vulnerabilities && Array.isArray(eventData.vulnerabilities)) {
         setAuthVulnerabilities(prev => {
           const filtered = prev.filter(v => v.file_path !== eventData.file_path);
@@ -288,53 +280,75 @@ function ScanContent() {
       }
       
       setScanStatus(`Analyzing ${eventData.file_name || eventData.file_path || "file"}... Found ${eventData.vulnerabilities?.length || 0} vulnerability/vulnerabilities`);
-      setCurrentCode(null); // Trigger reload
+      setCurrentCode(null);
     }
   };
 
+  // Extract project name from repo URL
+  const getProjectName = () => {
+    if (!repoUrl) return "";
+    const cleanUrl = repoUrl.replace(/\/tree\/.*$/, "").replace(/\/blob\/.*$/, "").replace(/\/$/, "");
+    const match = cleanUrl.match(/github\.com\/([^/]+)\/([^/]+)/);
+    if (match) {
+      return `${match[1]} / ${match[2]}`;
+    }
+    return "Unknown Project";
+  };
+
+  // Calculate scan progress
+  const scannedCount = completedFiles.size;
+  const totalFiles = repoFiles.length;
+  const scanProgress = totalFiles > 0 ? `${scannedCount}/${totalFiles}` : "0/0";
+
+  const currentFilePath = repoFiles[currentFileIndex]?.path || repoFiles[currentFileIndex]?.name || "";
+
   return (
-    <div className="min-h-screen bg-[#0d1117] text-white flex flex-col">
+    <div className="h-screen bg-[#0E141A] text-white flex flex-col overflow-hidden">
       {/* Header */}
-      <header className="border-b border-gray-800 bg-[#0d1117] flex-shrink-0">
-        <div className="px-4 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <Link
-              href="/"
-              className="flex items-center gap-2 text-gray-400 hover:text-white transition-colors"
-            >
-              <Home className="h-5 w-5" />
-              <span>Home</span>
-            </Link>
-            <span className="text-gray-600">|</span>
-            <Link
-              href="/projects"
-              className="flex items-center gap-2 text-gray-400 hover:text-white transition-colors"
-            >
-              <FolderOpen className="h-5 w-5" />
-              <span>View All Projects</span>
-            </Link>
+      <header className="bg-[#0E141A] flex-shrink-0">
+        <div className="py-4 flex items-center justify-between px-8">
+          <div className="flex items-center gap-3">
+            {/* TROJAN Logo */}
+            <div className="flex items-center gap-2">
+              <img src="/trojan.svg" alt="Trojan" className="h-14 w-auto" />
+            </div>
           </div>
-          <Link
-            href="/"
-            className="flex items-center gap-2 text-gray-400 hover:text-white transition-colors"
-          >
-            <ShieldCheck className="h-6 w-6 text-blue-500" />
-          </Link>
+          <div className="flex flex-col items-end gap-1">
+            {/* Project Name with GitHub icon */}
+            {repoUrl && (
+              <div className="flex items-center gap-2 text-[#D6D6D6]">
+                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+                </svg>
+                <span className="text-sm">
+                  {getProjectName().split(' / ').map((part, i) => 
+                    i === 1 ? <span key={i} className="font-bold"> / {part}</span> : <span key={i}>{part}</span>
+                  )}
+                </span>
+              </div>
+            )}
+            {/* Scan Status */}
+            {repoFiles.length > 0 && (
+              <div className="text-xs text-[#D6D6D6] text-opacity-60">
+                {scanProgress} Suspicious Files Scanned
+              </div>
+            )}
+          </div>
         </div>
       </header>
 
       {/* Scanner Visualization or Loading State */}
-      <div className="flex-1 overflow-hidden">
+      <div className="flex-1 overflow-hidden min-h-0 flex flex-col">
         {isLoading ? (
-          <div className="flex items-center justify-center h-full bg-[#0d1117]">
+          <div className="flex items-center justify-center h-full bg-[#0E141A]">
             <div className="text-center">
               <motion.div
                 animate={{ rotate: 360 }}
                 transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-                className="w-16 h-16 border-4 border-blue-500/30 border-t-blue-500 rounded-full mx-auto mb-4"
+                className="w-16 h-16 border-4 border-[#6699C9]/30 border-t-[#6699C9] rounded-full mx-auto mb-4"
               />
-              <p className="text-gray-400 text-lg">{scanStatus}</p>
-              <p className="text-gray-600 text-sm mt-2">This may take a moment...</p>
+              <p className="text-[#D6D6D6] text-sm">{scanStatus}</p>
+              <p className="text-[#D6D6D6] text-opacity-40 text-xs mt-2">This may take a moment...</p>
             </div>
           </div>
         ) : repoFiles.length > 0 ? (
@@ -347,12 +361,14 @@ function ScanContent() {
             onScanComplete={handleScanComplete}
             authVulnerabilities={authVulnerabilities}
             completedFiles={completedFiles}
+            scanStatus={scanStatus}
+            currentFilePath={currentFilePath}
           />
         ) : (
-          <div className="flex items-center justify-center h-full bg-[#0d1117]">
+          <div className="flex items-center justify-center h-full bg-[#0E141A]">
             <div className="text-center">
-              <ShieldCheck className="w-16 h-16 text-gray-600 mx-auto mb-4" />
-              <p className="text-gray-400 text-lg">{scanStatus}</p>
+              <ShieldCheck className="w-16 h-16 text-[#D6D6D6] text-opacity-40 mx-auto mb-4" />
+              <p className="text-[#D6D6D6] text-sm">{scanStatus || "No repository URL provided"}</p>
               <Link
                 href="/"
                 className="mt-4 inline-flex items-center gap-2 text-blue-500 hover:text-blue-400 transition-colors"
@@ -369,7 +385,7 @@ function ScanContent() {
 
 export default function ScanPage() {
   return (
-    <Suspense fallback={<div className="flex h-screen w-full items-center justify-center bg-[#0d1117] text-white">Loading...</div>}>
+    <Suspense fallback={<div className="flex h-screen w-full items-center justify-center bg-[#0E141A] text-white">Loading...</div>}>
       <ScanContent />
     </Suspense>
   );
