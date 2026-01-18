@@ -422,6 +422,16 @@ function ScanContent() {
         return;
       }
 
+      // Extract branch from URL if present (e.g., /tree/branch-name/ or /blob/branch-name/)
+      let branch = "main"; // default branch
+      const treeMatch = repoUrl.match(/\/tree\/([^/]+)/);
+      const blobMatch = repoUrl.match(/\/blob\/([^/]+)/);
+      if (treeMatch) {
+        branch = treeMatch[1];
+      } else if (blobMatch) {
+        branch = blobMatch[1];
+      }
+      
       // Clean the URL for matching
       const cleanUrl = repoUrl.replace(/\/tree\/.*$/, "").replace(/\/blob\/.*$/, "").replace(/\/$/, "");
       const match = cleanUrl.match(/github\.com\/([^/]+)\/([^/]+)/);
@@ -431,8 +441,8 @@ function ScanContent() {
         setCurrentCode(null);
         
         // Try proxy API route first (with GitHub token), fallback to direct URL
-        const proxyUrl = `/api/github/file?owner=${encodeURIComponent(owner)}&repo=${encodeURIComponent(repo)}&path=${encodeURIComponent(file.path)}`;
-        const directUrl = `https://raw.githubusercontent.com/${owner}/${repo}/main/${file.path}`;
+        const proxyUrl = `/api/github/file?owner=${encodeURIComponent(owner)}&repo=${encodeURIComponent(repo)}&path=${encodeURIComponent(file.path)}&branch=${encodeURIComponent(branch)}`;
+        const directUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${file.path}`;
         
         // Validate file path before fetching
         if (!file.path || file.path.trim() === "") {
@@ -458,19 +468,21 @@ function ScanContent() {
             setIsScanningAnimation(true);
           })
           .catch((proxyErr: any) => {
-            // Fallback to direct GitHub URL
+            // Fallback to direct GitHub URL - try main branch first
             fetch(directUrl)
               .then(res => {
-                if (!res.ok) {
-                  return fetch(directUrl.replace('/main/', '/master/'));
+                if (res.ok) {
+                  return res.text();
                 }
-                return res;
-              })
-              .then(res => {
-                if (!res.ok) {
-                  throw new Error(`Failed to fetch: ${res.status}`);
-                }
-                return res.text();
+                // If main branch fails, try master branch
+                const masterUrl = directUrl.replace('/main/', '/master/');
+                return fetch(masterUrl)
+                  .then(masterRes => {
+                    if (!masterRes.ok) {
+                      throw new Error(`Failed to fetch file: ${res.status} (main) and ${masterRes.status} (master)`);
+                    }
+                    return masterRes.text();
+                  });
               })
               .then(text => {
                 setCurrentCode(text || "// Error: Could not load file content");
@@ -483,7 +495,7 @@ function ScanContent() {
                 if (err instanceof TypeError && err.message === "Failed to fetch") {
                   setCurrentCode(`// Error: Network error - could not load file content\n// File: ${file.path}\n// Please check your connection and try again`);
                 } else {
-                  setCurrentCode(`// Error: Could not load file content\n// File: ${file.path}\n// ${err.message || "Unknown error"}`);
+                  setCurrentCode(`// Error: Could not load file content\n// File: ${file.path}\n// ${err.message || "Unknown error"}\n// URL: ${directUrl}`);
                 }
               });
           })
