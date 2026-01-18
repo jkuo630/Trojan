@@ -48,6 +48,14 @@ export default function LoginPage() {
       });
 
       if (error) throw error;
+
+      // Add authentication check to ensure the user is authenticated
+      if (!data || !data.user) {
+        throw new Error("Authentication failed");
+      }
+
+      // Redirect to a secure page after successful authentication
+      router.push("/secure-dashboard");
     } catch (err: any) {
       setError(err.message || "Failed to login with GitHub");
       setLoading(false);
