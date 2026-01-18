@@ -12,11 +12,20 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [loginAttempts, setLoginAttempts] = useState(0);
+  const maxAttempts = 5;
+  const lockoutTime = 30000; // 30 seconds
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError("");
+
+    if (loginAttempts >= maxAttempts) {
+      setError("Too many login attempts. Please try again later.");
+      setLoading(false);
+      return;
+    }
 
     try {
       const { data, error } = await supabase.auth.signInWithPassword({
@@ -24,13 +33,20 @@ export default function LoginPage() {
         password,
       });
 
-      if (error) throw error;
+      if (error) {
+        setLoginAttempts((prev) => prev + 1);
+        throw error;
+      }
 
+      setLoginAttempts(0); // Reset login attempts on successful login
       router.push("/projects");
     } catch (err: any) {
       setError(err.message || "Failed to login");
     } finally {
       setLoading(false);
+      if (loginAttempts >= maxAttempts) {
+        setTimeout(() => setLoginAttempts(0), lockoutTime); // Reset attempts after lockout time
+      }
     }
   };
 
