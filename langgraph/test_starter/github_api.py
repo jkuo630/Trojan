@@ -336,14 +336,14 @@ IMPORTANT: The fixed_content should be the ENTIRE file, ready to replace the ori
             messages=[
                 {
                     "role": "system",
-                    "content": "You are a security expert who fixes code vulnerabilities. Always return valid JSON. Fix ALL vulnerabilities comprehensively."
+                    "content": "You are a senior security engineer with 10+ years of experience in secure code remediation. You MUST make actual code changes to fix vulnerabilities - returning unchanged code is unacceptable. Always implement production-ready security solutions using industry best practices. Always return valid JSON with complete fixed code."
                 },
                 {
                     "role": "user",
                     "content": prompt
                 }
             ],
-            temperature=0.3,
+            temperature=0.2,
             response_format={"type": "json_object"}
         )
         
