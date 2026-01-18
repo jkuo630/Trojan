@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import type React from "react";
 import { CodeScanner, type CodeAnnotation } from "@/components/CodeScanner";
-import { FileCode, ShieldAlert, CheckCircle, AlertTriangle, FileText, ChevronRight, Terminal, Cpu, Activity, Key, Lock, Database, DatabaseZap, Code as CodeIcon, Shell, EyeOff, KeyRound } from "lucide-react";
+import { FileCode, ShieldAlert, CheckCircle, AlertTriangle, FileText, ChevronRight, Terminal, Cpu, Activity, Key, Lock, Database, DatabaseZap, Code as CodeIcon, Shell, EyeOff, KeyRound, LockKeyhole } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 const scanLogs: { line: number; message: string }[] = [];
@@ -48,6 +48,16 @@ function getVulnerabilityIcon(vulnType: string, vulnerabilityType?: string): Rea
       typeLower.includes("jwt") || typeLower.includes("oauth") ||
       typeLower.includes("authentication")) {
     return <KeyRound className="h-4 w-4" />;
+  }
+  
+  // Check if it's a cryptographic vulnerability
+  if (vulnTypeLower === "cryptographic_vulnerability" || typeLower.includes("cryptographic") ||
+      typeLower.includes("crypto") || typeLower.includes("hash") ||
+      typeLower.includes("encryption") || typeLower.includes("ssl") ||
+      typeLower.includes("tls") || typeLower.includes("certificate") ||
+      typeLower.includes("md5") || typeLower.includes("sha1") ||
+      typeLower.includes("weak key") || typeLower.includes("entropy")) {
+    return <LockKeyhole className="h-4 w-4" />;
   }
   
   // Default to ShieldAlert for unknown types
