@@ -46,11 +46,19 @@ export default function ScannerDemo({
   // Effect to log functions when a new file starts scanning
   useEffect(() => {
     if (repoFiles && repoFiles[currentFileIndex]) {
-      const file = repoFiles[currentFileIndex];
-      const newLogs = [`Analyzing ${file.name}...`];
+      const file = repoFiles[currentFileIndex] as any;
+      const newLogs = [`Analyzing suspicious file: ${file.name}...`];
+      
+      if (file.riskLevel) {
+        newLogs.push(`Risk Level: ${file.riskLevel.toUpperCase()}`);
+      }
+      
+      if (file.reason) {
+        newLogs.push(`Reason: ${file.reason}`);
+      }
       
       if (file.functions && file.functions.length > 0) {
-        newLogs.push(`Detected ${file.functions.length} functions: ${file.functions.join(", ")}`);
+        newLogs.push(`Suspicious functions: ${file.functions.join(", ")}`);
       }
 
       if (file.vulnerabilities && file.vulnerabilities.length > 0) {
@@ -104,7 +112,7 @@ export default function ScannerDemo({
     <main className="flex h-screen w-full bg-[#0d1117] text-white overflow-hidden">
       {/* Left Sidebar - File Explorer */}
       <div className="w-64 flex-shrink-0 border-r border-gray-800 bg-[#0d1117] p-4 flex flex-col">
-        <h2 className="mb-4 text-xs font-bold uppercase tracking-wider text-gray-500">Project Files</h2>
+        <h2 className="mb-4 text-xs font-bold uppercase tracking-wider text-gray-500">Suspicious Files</h2>
         <div className="space-y-1 overflow-y-auto max-h-[calc(100vh-100px)]">
           {displayFiles.map((file, i) => (
             <div

@@ -1,15 +1,35 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { ShieldCheck, ChevronRight, Play, Github } from "lucide-react";
+import { ShieldCheck, ChevronRight, Play, Github, LogIn } from "lucide-react";
+import { supabase } from "@/lib/supabase";
 
 export default function LandingPage() {
   const router = useRouter();
   const [repoUrl, setRepoUrl] = useState("");
   const [loading, setLoading] = useState(false);
+  const [user, setUser] = useState<any>(null);
+  const [checkingAuth, setCheckingAuth] = useState(true);
+
+  useEffect(() => {
+    // Check if user is logged in
+    supabase.auth.getUser().then(({ data }: { data: any }) => {
+      setUser(data.user);
+      setCheckingAuth(false);
+    });
+
+    // Listen for auth changes
+    const { data: authListener } = supabase.auth.onAuthStateChange((event: any, session: any) => {
+      setUser(session?.user ?? null);
+    });
+
+    return () => {
+      authListener.subscription.unsubscribe();
+    };
+  }, []);
 
   const handleScan = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -102,6 +122,34 @@ export default function LandingPage() {
             Paste a public GitHub repository URL to analyze the codebase.
           </p>
         </motion.div>
+
+        {/* Auth Section */}
+        {!checkingAuth && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.8, delay: 0.8 }}
+            className="mt-8"
+          >
+            {user ? (
+              <Link
+                href="/projects"
+                className="inline-flex items-center gap-2 text-gray-400 hover:text-white transition-colors"
+              >
+                <span>View Your Projects</span>
+                <ChevronRight className="h-4 w-4" />
+              </Link>
+            ) : (
+              <Link
+                href="/auth/login"
+                className="inline-flex items-center gap-2 text-blue-500 hover:text-blue-400 transition-colors"
+              >
+                <LogIn className="h-4 w-4" />
+                <span>Sign in to save your scans</span>
+              </Link>
+            )}
+          </motion.div>
+        )}
       </div>
 
       {/* Decorative footer elements */}
