@@ -24,6 +24,7 @@ interface CodeScannerProps {
   onScanLine?: (lineIndex: number) => void;
   onScanStart?: () => void; // Called when animation actually starts
   onScanComplete?: () => void;
+  onScanProgress?: (scannedLineIndex: number) => void; // Called when a line is scanned
   skipAnimation?: boolean; // If true, skip animation and show all lines as scanned
 }
 
@@ -54,9 +55,8 @@ const CodeLine = memo(function CodeLine({
         opacity: isPending ? 0.6 : 1,
         filter: isPending ? "blur(0.5px)" : "blur(0px)",
         backgroundColor:
-          isScanning
-            ? "rgba(102, 153, 201, 0.15)" // Light blue highlight for scanning line (#6699C9)
-            : isScanned && annotation
+          // Remove isScanning highlight - using visualScanRect instead
+          isScanned && annotation
             ? annotation.type === "error"
               ? "rgba(220, 38, 38, 0.15)"
               : annotation.type === "success"
@@ -112,6 +112,7 @@ export function CodeScanner({
   onScanLine,
   onScanStart,
   onScanComplete,
+  onScanProgress,
   skipAnimation = false,
 }: CodeScannerProps) {
   const [tokens, setTokens] = useState<ThemedToken[][]>([]);
@@ -122,10 +123,41 @@ export function CodeScanner({
     height: number;
   } | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const animationStartedRef = useRef(false);
+  const lastTokensKeyRef = useRef<string>('');
+  const onScanProgressRef = useRef(onScanProgress);
+  const onScanCompleteRef = useRef(onScanComplete);
+  const onScanStartRef = useRef(onScanStart);
+  
+  // Update refs when callbacks change
+  useEffect(() => {
+    onScanProgressRef.current = onScanProgress;
+    onScanCompleteRef.current = onScanComplete;
+    onScanStartRef.current = onScanStart;
+  }, [onScanProgress, onScanComplete, onScanStart]);
 
   useEffect(() => {
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/d7ed34c7-a4a6-4f15-8a74-de07d29ed0ca',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CodeScanner.tsx:130',message:'Code prop changed - highlight effect triggered',data:{codeIsNull:code===null,codeIsUndefined:code===undefined,codeLength:code?.length||0,codeHash:code?code.substring(0,20)+'...':null},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
+    
     async function highlight() {
-      if (code === null || code === undefined) return;
+      if (code === null || code === undefined) {
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/d7ed34c7-a4a6-4f15-8a74-de07d29ed0ca',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CodeScanner.tsx:131',message:'Code is null/undefined, skipping highlight',data:{codeIsNull:code===null,codeIsUndefined:code===undefined},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+        // #endregion
+        return;
+      }
+
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/d7ed34c7-a4a6-4f15-8a74-de07d29ed0ca',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CodeScanner.tsx:138',message:'Starting code highlight',data:{codeLength:code.length,codePreview:code.substring(0,50)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+      // #endregion
+
+      // Reset animation state when code changes
+      animationStartedRef.current = false;
+      lastTokensKeyRef.current = ''; // Reset token key to allow new animation
+      setActiveLineIndex(-1);
+      setVisualScanRect(null);
 
       const highlighter = await createHighlighter({
         themes: ["github-dark"],
@@ -155,13 +187,41 @@ export function CodeScanner({
 
   // Scanning Logic
   useEffect(() => {
-    if (loading || tokens.length === 0) return;
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/d7ed34c7-a4a6-4f15-8a74-de07d29ed0ca',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CodeScanner.tsx:159',message:'Scanning effect triggered',data:{loading,tokensLength:tokens.length,skipAnimation,annotationsCount:annotations.length,animationStarted:animationStartedRef.current},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+    // #endregion
+    if (loading || tokens.length === 0) {
+      // Reset animation state when code is loading or empty
+      animationStartedRef.current = false;
+      setActiveLineIndex(-1);
+      setVisualScanRect(null);
+      return;
+    }
 
     // If skipAnimation is true, immediately set to completed state
     if (skipAnimation) {
       setActiveLineIndex(tokens.length);
       setVisualScanRect(null);
-      onScanComplete?.();
+      onScanProgressRef.current?.(tokens.length - 1); // Notify that all lines are scanned
+      onScanCompleteRef.current?.();
+      animationStartedRef.current = true;
+      return;
+    }
+
+    // Check if this is new code (tokens changed) - if so, reset animation
+    const tokensKey = tokens.length > 0 ? `${tokens.length}-${tokens[0]?.length || 0}` : 'empty';
+    
+    if (tokensKey !== lastTokensKeyRef.current) {
+      // New code loaded, reset animation
+      animationStartedRef.current = false;
+      setActiveLineIndex(-1);
+      setVisualScanRect(null);
+      lastTokensKeyRef.current = tokensKey;
+    } else if (animationStartedRef.current) {
+      // Same code, animation already running - don't restart
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/d7ed34c7-a4a6-4f15-8a74-de07d29ed0ca',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CodeScanner.tsx:178',message:'Animation already started, skipping restart',data:{tokensKey},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+      // #endregion
       return;
     }
 
@@ -172,13 +232,16 @@ export function CodeScanner({
     let frameCount = 0; // Count frames to control speed
 
     const processFrame = () => {
-      const LINES_PER_FRAME = 0.15; // Lines per frame (fractional = slower)
+      const LINES_PER_FRAME = 2; // Lines per frame (fractional = slower)
       const FRAME_DELAY = Math.ceil(1 / LINES_PER_FRAME); // Process one step every N frames
       
       const container = containerRef.current;
       if (!container) return; // Should not happen if mounted
 
       frameCount++;
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/d7ed34c7-a4a6-4f15-8a74-de07d29ed0ca',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CodeScanner.tsx:184',message:'processFrame called',data:{frameCount,currentLogicalLine,currentVisualLine,tokensLength:tokens.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+      // #endregion
       
       // Only process one step every FRAME_DELAY frames (slows down animation)
       if (frameCount < FRAME_DELAY) {
@@ -214,7 +277,9 @@ export function CodeScanner({
         if (currentLogicalLine >= tokens.length) {
           setVisualScanRect(null);
           setActiveLineIndex(tokens.length);
-          onScanComplete?.();
+          // Report final line as scanned
+          onScanProgressRef.current?.(tokens.length - 1);
+          onScanCompleteRef.current?.();
           return; // Stop animation
         }
 
@@ -235,6 +300,11 @@ export function CodeScanner({
                 currentVisualLine++;
             } else {
                 // Done with this line, move to next
+                // Report progress when we finish scanning a line
+                // #region agent log
+                fetch('http://127.0.0.1:7242/ingest/d7ed34c7-a4a6-4f15-8a74-de07d29ed0ca',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CodeScanner.tsx:242',message:'Line scanned, calling onScanProgress',data:{lineIndex:currentLogicalLine,lineNumber:currentLogicalLine+1},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+                // #endregion
+                onScanProgressRef.current?.(currentLogicalLine);
                 currentLogicalLine++;
                 currentVisualLine = 0;
             }
@@ -249,6 +319,9 @@ export function CodeScanner({
       
       // Since the loop might have pushed currentLogicalLine past the end, clamp it or handle it
       if (currentLogicalLine < tokens.length) {
+          // #region agent log
+          fetch('http://127.0.0.1:7242/ingest/d7ed34c7-a4a6-4f15-8a74-de07d29ed0ca',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CodeScanner.tsx:257',message:'Setting activeLineIndex',data:{activeLineIndex:currentLogicalLine,lineNumber:currentLogicalLine+1},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+          // #endregion
           setActiveLineIndex(currentLogicalLine);
 
           // Calculate Scroll Position & Visual Rect
@@ -280,7 +353,7 @@ export function CodeScanner({
           // Final state if we overshot in the loop
            setVisualScanRect(null);
            setActiveLineIndex(tokens.length);
-           onScanComplete?.();
+           onScanCompleteRef.current?.();
            return;
       }
 
@@ -291,15 +364,21 @@ export function CodeScanner({
     // Start scanning
     // Small timeout to allow initial render/paint
     const timeoutId = setTimeout(() => {
-        onScanStart?.(); // Notify that animation is starting
+        animationStartedRef.current = true;
+        onScanStartRef.current?.(); // Notify that animation is starting
         animationFrameId = requestAnimationFrame(processFrame);
     }, 100);
 
     return () => {
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/d7ed34c7-a4a6-4f15-8a74-de07d29ed0ca',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CodeScanner.tsx:359',message:'Scanning effect cleanup - cancelling animation',data:{animationStarted:animationStartedRef.current,activeLineIndex,hasAnimationFrame:!!animationFrameId},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+        // #endregion
         clearTimeout(timeoutId);
         cancelAnimationFrame(animationFrameId);
+        // Don't reset animationStartedRef here - let it persist across re-renders
+        // Only reset when code actually changes (handled in the loading check above)
     };
-  }, [loading, tokens, annotations, skipAnimation, onScanStart, onScanComplete]);
+  }, [loading, tokens, skipAnimation]); // Removed callbacks from deps to prevent effect re-runs
 
   if (loading && (code === null || code === undefined)) {
     return (
@@ -354,6 +433,12 @@ export function CodeScanner({
               const isScanned = lineIndex < activeLineIndex;
               const isScanning = lineIndex === activeLineIndex;
               const isPending = lineIndex > activeLineIndex;
+              
+              // #region agent log
+              if (annotation) {
+                fetch('http://127.0.0.1:7242/ingest/d7ed34c7-a4a6-4f15-8a74-de07d29ed0ca',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CodeScanner.tsx:373',message:'Line rendered with annotation',data:{lineIndex,lineNum,activeLineIndex,isScanned,isScanning,annotationType:annotation.type},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+              }
+              // #endregion
 
               return (
                 <CodeLine

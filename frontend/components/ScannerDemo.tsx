@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { CodeScanner, type CodeAnnotation } from "@/components/CodeScanner";
 import { FileCode, ShieldAlert, CheckCircle, AlertTriangle, FileText, ChevronRight, Terminal, Cpu, Activity } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -44,6 +44,28 @@ export default function ScannerDemo({
   const logsEndRef = useRef<HTMLDivElement>(null);
   const [severityFilter, setSeverityFilter] = useState<"all" | "low" | "medium" | "high">("all");
   const [vulnFilter, setVulnFilter] = useState<"all" | "low" | "medium" | "high">("all");
+  const [scannedLineIndex, setScannedLineIndex] = useState(-1); // Track the highest scanned line
+  
+  // Track when initialCode prop changes
+  useEffect(() => {
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/d7ed34c7-a4a6-4f15-8a74-de07d29ed0ca',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ScannerDemo.tsx:47',message:'initialCode prop changed',data:{codeIsNull:initialCode===null,codeIsUndefined:initialCode===undefined,codeLength:initialCode?.length||0,codeHash:initialCode?initialCode.substring(0,20)+'...':null},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
+  }, [initialCode]);
+  
+  // Wrapper to log scannedLineIndex updates - use useCallback to stabilize reference
+  const handleScanProgress = useCallback((lineIndex: number) => {
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/d7ed34c7-a4a6-4f15-8a74-de07d29ed0ca',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ScannerDemo.tsx:50',message:'handleScanProgress called',data:{lineIndex,lineNumber:lineIndex+1},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
+    // #endregion
+    setScannedLineIndex(prev => {
+      // Only update if this is a higher line index
+      if (lineIndex > prev) {
+        return lineIndex;
+      }
+      return prev;
+    });
+  }, []);
 
   // Get current file annotations from repoFiles
   const fileAnnotations = repoFiles && repoFiles[currentFileIndex]?.vulnerabilities 
@@ -85,6 +107,9 @@ export default function ScannerDemo({
     const existing = acc.find(a => a.line === annotation.line);
     if (!existing) {
       acc.push(annotation);
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/d7ed34c7-a4a6-4f15-8a74-de07d29ed0ca',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ScannerDemo.tsx:96',message:'Annotation added',data:{line:annotation.line,type:annotation.type,annotationsCount:acc.length+1},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+      // #endregion
     } else if (annotation.type === "error" && existing.type !== "error") {
       // Replace with error type if it's more severe
       const index = acc.indexOf(existing);
@@ -92,10 +117,17 @@ export default function ScannerDemo({
     }
     return acc;
   }, []);
+  
+  // #region agent log
+  useEffect(() => {
+    fetch('http://127.0.0.1:7242/ingest/d7ed34c7-a4a6-4f15-8a74-de07d29ed0ca',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ScannerDemo.tsx:104',message:'currentAnnotations changed',data:{annotationsCount:currentAnnotations.length,annotations:currentAnnotations.map(a=>({line:a.line,type:a.type}))},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+  }, [currentAnnotations.length, JSON.stringify(currentAnnotations.map(a => `${a.line}-${a.type}`))]);
+  // #endregion
 
-  // Reset found issues when file changes
+  // Reset found issues and scan progress when file changes
   useEffect(() => {
     setFoundIssues([]);
+    setScannedLineIndex(-1); // Always reset to -1, let animation progress naturally
   }, [currentFileIndex]);
 
   // Effect to log functions when a new file starts scanning
@@ -163,8 +195,21 @@ export default function ScannerDemo({
 
   const currentFileName = repoFiles ? repoFiles[currentFileIndex]?.name : "";
 
-  // Filter vulnerabilities by severity
+  // Filter vulnerabilities: only show ones that have been scanned AND match severity filter
   const filteredVulnerabilities = authVulnerabilities.filter((vuln: any) => {
+    // Only show vulnerabilities for lines that have been scanned
+    // Line numbers are 1-indexed, scannedLineIndex is 0-indexed
+    if (vuln.line !== null && vuln.line !== undefined) {
+      const vulnLineIndex = vuln.line - 1; // Convert to 0-indexed
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/d7ed34c7-a4a6-4f15-8a74-de07d29ed0ca',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ScannerDemo.tsx:180',message:'Filtering vulnerability',data:{vulnLine:vuln.line,vulnLineIndex,scannedLineIndex,willShow:vulnLineIndex<=scannedLineIndex},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
+      // #endregion
+      if (vulnLineIndex > scannedLineIndex) {
+        return false; // Haven't scanned this line yet
+      }
+    }
+    
+    // Apply severity filter
     if (vulnFilter === "all") return true;
     const severity = (vuln.severity?.toLowerCase() || "medium");
     return severity === vulnFilter;
@@ -277,7 +322,8 @@ export default function ScannerDemo({
               onScanLine={handleScanLine}
               onScanStart={onScanStart}
               onScanComplete={onScanComplete}
-              skipAnimation={completedFiles.has(currentFileIndex)}
+              onScanProgress={handleScanProgress}
+              skipAnimation={false}
             />
           </div>
         </div>
