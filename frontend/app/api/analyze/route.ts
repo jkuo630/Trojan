@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import { spawn } from "child_process";
 import * as parser from "@babel/parser";
 import traverse from "@babel/traverse";
+import path from "path";
+import { createServerClient } from "@/lib/supabase-server";
 
 // Helper to recursively get files from GitHub API
 async function getRepoFiles(owner: string, repo: string, treeSha = "main") {
@@ -136,7 +139,133 @@ export async function POST(req: NextRequest) {
 
     const processedFiles = (await Promise.all(processPromises)).filter(Boolean);
 
-    return NextResponse.json(processedFiles); // Return simple array directly
+    // 4. Call LangGraph agent to identify suspicious files
+    let suspiciousFiles: any[] = [];
+    try {
+      const agentScriptPath = path.join(
+        process.cwd(),
+        "..",
+        "langgraph",
+        "test_starter",
+        "run_agent.py"
+      );
+      
+      // Prepare the file structure as JSON
+      const fileStructureJson = JSON.stringify(processedFiles);
+      
+      // Execute Python script with file structure as stdin using spawn
+      const pythonProcess = spawn("python3", [agentScriptPath], {
+        env: {
+          ...process.env,
+          PYTHONPATH: path.join(process.cwd(), "..", "langgraph", "test_starter"),
+        },
+      });
+
+      let stdout = "";
+      let stderr = "";
+
+      pythonProcess.stdout.on("data", (data) => {
+        stdout += data.toString();
+      });
+
+      pythonProcess.stderr.on("data", (data) => {
+        stderr += data.toString();
+      });
+
+      // Write input to stdin
+      pythonProcess.stdin.write(fileStructureJson);
+      pythonProcess.stdin.end();
+
+      // Wait for process to complete
+      await new Promise<void>((resolve, reject) => {
+        pythonProcess.on("close", (code) => {
+          if (code === 0) {
+            resolve();
+          } else {
+            reject(new Error(`Python script exited with code ${code}`));
+          }
+        });
+        pythonProcess.on("error", reject);
+      });
+
+      // Parse the output
+      if (stdout) {
+        try {
+          suspiciousFiles = JSON.parse(stdout.trim());
+        } catch (parseError) {
+          console.error("Failed to parse agent output:", stdout);
+          suspiciousFiles = [];
+        }
+      }
+
+      // Output to terminal
+      console.log("\n=== SECURITY RISK ASSESSMENT ===");
+      console.log(`Repository: ${owner}/${repo}`);
+      console.log(`Total files analyzed: ${processedFiles.length}`);
+      console.log(`Suspicious files found: ${suspiciousFiles.length}\n`);
+
+      if (suspiciousFiles.length > 0) {
+        suspiciousFiles.forEach((file: any, index: number) => {
+          console.log(`${index + 1}. ${file.file_path || "Unknown"}`);
+          console.log(`   Risk Level: ${file.risk_level || "unknown"}`);
+          console.log(`   Reason: ${file.reason || "No reason provided"}`);
+          if (file.suspicious_functions && file.suspicious_functions.length > 0) {
+            console.log(`   Suspicious Functions: ${file.suspicious_functions.join(", ")}`);
+          }
+          console.log("");
+        });
+      } else {
+        console.log("No suspicious files identified.\n");
+      }
+      console.log("================================\n");
+
+      if (stderr) {
+        console.error("Agent stderr:", stderr);
+      }
+    } catch (agentError: any) {
+      console.error("Error running security agent:", agentError);
+      // Continue even if agent fails - return file structure anyway
+    }
+
+    // 5. Save project to Supabase if user is authenticated
+    let projectId: string | null = null;
+    try {
+      const supabase = createServerClient();
+      const { data: { user } } = await supabase.auth.getUser();
+
+      if (user) {
+        const repositoryName = `${owner}/${repo}`;
+        const { data, error } = await supabase
+          .from("projects")
+          .insert({
+            user_id: user.id,
+            github_url: cleanUrl,
+            repository_name: repositoryName,
+            file_structure: processedFiles,
+            suspicious_files: suspiciousFiles,
+            status: "completed",
+          })
+          .select()
+          .single();
+
+        if (!error && data) {
+          projectId = data.id;
+          console.log(`Project saved to Supabase: ${projectId}`);
+        } else {
+          console.error("Error saving project to Supabase:", error);
+        }
+      }
+    } catch (saveError) {
+      console.error("Error saving project:", saveError);
+      // Continue even if save fails
+    }
+
+    // Return both file structure and suspicious files, plus project ID if saved
+    return NextResponse.json({
+      file_structure: processedFiles,
+      suspicious_files: suspiciousFiles,
+      project_id: projectId,
+    });
 
   } catch (error) {
     console.error("Analysis failed:", error);
