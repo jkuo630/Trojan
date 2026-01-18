@@ -188,6 +188,8 @@ export async function POST(req: NextRequest) {
                   sendEvent("vulnerability", { ...eventData.data, _vulnerabilityType: eventData.type });
                 } else if (eventData.type === "suspicious_files") {
                   sendEvent("suspicious_files", eventData.data);
+                } else if (eventData.type === "suspicious_files_partial") {
+                  sendEvent("suspicious_files_partial", eventData.data);
                 } else if (eventData.type === "file_analysis_start") {
                   sendEvent("file_analysis_start", eventData.data);
                 } else if (eventData.type === "file_analysis_complete") {

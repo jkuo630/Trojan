@@ -30,6 +30,7 @@ function ScanContent() {
   const [pendingFileChange, setPendingFileChange] = useState<{fileIndex: number, eventData: any} | null>(null); // Queue next file change
   const [repository, setRepository] = useState<string>("");
   const [suspiciousFiles, setSuspiciousFiles] = useState<any[]>([]);
+  const [partialSuspiciousFiles, setPartialSuspiciousFiles] = useState<any[]>([]); // Accumulate partial results
 
   useEffect(() => {
     if (!repoUrl) return;
@@ -165,9 +166,38 @@ function ScanContent() {
                   });
                   break;
 
+                case "suspicious_files_partial":
+                  // Accumulate partial results from batch processing
+                  if (Array.isArray(eventData) && eventData.length > 0) {
+                    setPartialSuspiciousFiles(prev => {
+                      const combined = [...prev, ...eventData];
+                      // Remove duplicates based on file_path
+                      const unique = combined.filter((file, index, self) =>
+                        index === self.findIndex(f => f.file_path === file.file_path)
+                      );
+                      
+                      // Update UI with accumulated results
+                      const mappedFiles = unique.map((f: any) => ({
+                        name: f.file_path?.split("/").pop() || "Unknown",
+                        path: f.file_path || "",
+                        functions: f.suspicious_functions || [],
+                        riskLevel: f.risk_level || "unknown",
+                        reason: f.reason || "",
+                      }));
+                      setRepoFiles(mappedFiles);
+                      setIsLoading(false);
+                      setScanStatus(`Found ${unique.length} suspicious file(s) so far... Analyzing batches...`);
+                      
+                      return unique;
+                    });
+                  }
+                  break;
+
                 case "suspicious_files":
+                  // Final combined results from all batches
                   if (Array.isArray(eventData) && eventData.length > 0) {
                     setSuspiciousFiles(eventData); // Store full suspicious files data
+                    setPartialSuspiciousFiles([]); // Clear partial results
                     const mappedFiles = eventData.map((f: any) => ({
                       name: f.file_path?.split("/").pop() || "Unknown",
                       path: f.file_path || "",
