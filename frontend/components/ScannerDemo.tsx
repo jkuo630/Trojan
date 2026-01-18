@@ -100,6 +100,7 @@ export default function ScannerDemo({
   const [foundIssues, setFoundIssues] = useState<CodeAnnotation[]>([]);
   const [logs, setLogs] = useState<string[]>([]);
   const logsEndRef = useRef<HTMLDivElement>(null);
+  const completionLoggedRef = useRef<boolean>(false);
   const [fixingVulnerability, setFixingVulnerability] = useState<number | null>(null);
   const [fixResults, setFixResults] = useState<Map<number, { success: boolean; message: string; pr_url?: string }>>(new Map());
 
@@ -187,6 +188,21 @@ export default function ScannerDemo({
   useEffect(() => {
     logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [logs]);
+
+  // Effect to detect when all files are completed and log completion message
+  useEffect(() => {
+    if (repoFiles && repoFiles.length > 0 && completedFiles.size === repoFiles.length && !completionLoggedRef.current) {
+      const totalVulnerabilities = authVulnerabilities.length;
+      
+      const completionMessages = [
+        `[${new Date().toLocaleTimeString().split(' ')[0]}] ✓ Scan completed - All ${repoFiles.length} file(s) analyzed`,
+        `[${new Date().toLocaleTimeString().split(' ')[0]}] Total vulnerabilities identified: ${totalVulnerabilities}`
+      ];
+      
+      setLogs(prev => [...prev, ...completionMessages]);
+      completionLoggedRef.current = true;
+    }
+  }, [completedFiles, repoFiles, authVulnerabilities.length]);
 
   const handleScanLine = (lineIndex: number) => {
     // Check if the current line (lineIndex + 1) has an annotation
