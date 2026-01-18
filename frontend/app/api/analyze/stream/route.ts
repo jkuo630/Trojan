@@ -7,16 +7,10 @@ import path from "path";
 // Helper to recursively get files from GitHub API
 async function getRepoFiles(owner: string, repo: string, treeSha = "main") {
   const url = `https://api.github.com/repos/${owner}/${repo}/git/trees/${treeSha}?recursive=1`;
-  const headers: HeadersInit = {
-    "User-Agent": "Trojan-Scanner-Bot",
-  };
-  
-  if (process.env.GITHUB_TOKEN) {
-    headers["Authorization"] = `Bearer ${process.env.GITHUB_TOKEN}`;
-  }
-  
   const res = await fetch(url, {
-    headers,
+    headers: {
+      "User-Agent": "Trojan-Scanner-Bot",
+    },
     next: { revalidate: 3600 }
   });
   
@@ -31,17 +25,11 @@ async function getRepoFiles(owner: string, repo: string, treeSha = "main") {
 
 // Helper to fetch file content
 async function getFileContent(owner: string, repo: string, path: string) {
-  const headers: HeadersInit = {};
-  
-  if (process.env.GITHUB_TOKEN) {
-    headers["Authorization"] = `Bearer ${process.env.GITHUB_TOKEN}`;
-  }
-  
   const url = `https://raw.githubusercontent.com/${owner}/${repo}/main/${path}`;
-  const res = await fetch(url, { headers });
+  const res = await fetch(url);
   if (!res.ok) {
     const masterUrl = `https://raw.githubusercontent.com/${owner}/${repo}/master/${path}`;
-    const resMaster = await fetch(masterUrl, { headers });
+    const resMaster = await fetch(masterUrl);
     if (!resMaster.ok) return "";
     return await resMaster.text();
   }

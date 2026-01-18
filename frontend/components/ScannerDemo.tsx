@@ -22,6 +22,8 @@ interface ScannerDemoProps {
   wsConnected?: boolean;
   authVulnerabilities?: any[]; // Auth vulnerabilities from the agent
   completedFiles?: Set<number>; // Set of completed file indices
+  scanStatus?: string; // Current scan status message
+  currentFilePath?: string; // Current file path for breadcrumb
 }
 
 export default function ScannerDemo({ 
@@ -33,11 +35,15 @@ export default function ScannerDemo({
   onScanComplete,
   wsConnected = false,
   authVulnerabilities = [],
-  completedFiles = new Set()
+  completedFiles = new Set(),
+  scanStatus = "",
+  currentFilePath = ""
 }: ScannerDemoProps) {
   const [foundIssues, setFoundIssues] = useState<CodeAnnotation[]>([]);
   const [logs, setLogs] = useState<string[]>([]);
   const logsEndRef = useRef<HTMLDivElement>(null);
+  const [severityFilter, setSeverityFilter] = useState<"all" | "low" | "medium" | "high">("all");
+  const [vulnFilter, setVulnFilter] = useState<"all" | "low" | "medium" | "high">("all");
 
   // Get current file annotations from repoFiles
   const fileAnnotations = repoFiles && repoFiles[currentFileIndex]?.vulnerabilities 
@@ -46,15 +52,15 @@ export default function ScannerDemo({
 
   // Convert auth vulnerabilities to annotations for current file
   const currentFile = repoFiles?.[currentFileIndex];
-  const currentFilePath = currentFile?.path || "";
+  const filePath = currentFilePath || currentFile?.path || "";
   
   // Filter auth vulnerabilities for current file and convert to CodeAnnotation format
   const authAnnotations: CodeAnnotation[] = authVulnerabilities
     .filter((vuln: any) => {
       // Match vulnerabilities to current file by path
       const vulnPath = vuln.location || vuln.file_path || "";
-      const fileName = currentFilePath.split("/").pop() || currentFile?.name || "";
-      const matchesFile = vulnPath.includes(fileName) || vulnPath === currentFilePath || 
+      const fileName = filePath.split("/").pop() || currentFile?.name || "";
+      const matchesFile = vulnPath.includes(fileName) || vulnPath === filePath || 
                          (vuln.file_index !== undefined && vuln.file_index === currentFileIndex);
       // Only create annotation if we have a line number (null/undefined means we can't highlight a specific line)
       return matchesFile && vuln.line !== null && vuln.line !== undefined;
@@ -157,72 +163,116 @@ export default function ScannerDemo({
 
   const currentFileName = repoFiles ? repoFiles[currentFileIndex]?.name : "";
 
-  return (
-    <main className="flex h-screen w-full bg-[#0d1117] text-white overflow-hidden">
-      {/* Left Sidebar - File Explorer */}
-      <div className="w-64 flex-shrink-0 border-r border-gray-800 bg-[#0d1117] p-4 flex flex-col">
-        <h2 className="mb-4 text-xs font-bold uppercase tracking-wider text-gray-500">Suspicious Files</h2>
-        <div className="space-y-1 overflow-y-auto max-h-[calc(100vh-100px)] scrollbar-hide">
-          {displayFiles.map((file, i) => (
-            <div
-              key={file.name + i}
-              onClick={() => onFileSelect?.(i)}
-              className={`flex items-center gap-2 rounded px-2 py-1.5 text-sm cursor-pointer hover:bg-white/5 ${
-                file.status === "scanning"
-                  ? "bg-blue-500/10 text-blue-400"
-                  : file.status === "completed"
-                  ? "text-gray-400"
-                  : "text-gray-600"
-              }`}
-            >
-              <FileCode className="h-4 w-4 flex-shrink-0" />
-              <span className="flex-1 truncate">{file.name}</span>
-              {file.status === "scanning" && (
-                <motion.div
-                  className="h-1.5 w-1.5 rounded-full bg-blue-500"
-                  animate={{ opacity: [1, 0.5, 1] }}
-                  transition={{ duration: 1, repeat: Infinity }}
-                />
-              )}
-              {file.status === "completed" && <CheckCircle className="h-3 w-3 text-green-500 flex-shrink-0" />}
-            </div>
-          ))}
-        </div>
-      </div>
+  // Filter vulnerabilities by severity
+  const filteredVulnerabilities = authVulnerabilities.filter((vuln: any) => {
+    if (vulnFilter === "all") return true;
+    const severity = (vuln.severity?.toLowerCase() || "medium");
+    return severity === vulnFilter;
+  });
 
-      {/* Center - Code Scanner & Logs */}
-      <div className="flex-1 flex flex-col min-w-0 bg-black/20">
-        <div className="flex h-12 items-center border-b border-gray-800 px-4 bg-[#0d1117]">
-          <span className="flex items-center gap-2 text-sm text-gray-400">
-            <span className="text-gray-600">src</span>
-            <ChevronRight className="h-3 w-3" />
-            <span className="text-blue-400">{currentFileName}</span>
-          </span>
-          <div className="ml-auto flex items-center gap-2">
-            <div className="flex items-center gap-1.5 rounded-full bg-blue-500/10 px-2.5 py-1 text-xs text-blue-400">
-              <Activity className="h-3 w-3" />
-              <span>Scanning</span>
-            </div>
-            {wsConnected && (
-              <div className="flex items-center gap-1.5 rounded-full bg-green-500/10 px-2.5 py-1 text-xs text-green-400">
-                <div className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse" />
-                <span>Live</span>
+  // Get agent activity message from scanStatus
+  const getAgentMessage = () => {
+    if (scanStatus.includes("reviewing") || scanStatus.includes("Analyzing")) {
+      return scanStatus;
+    }
+    return "Agent currently reviewing file for any authorization-related vulnerabilities";
+  };
+
+  const getAgentSubMessage = () => {
+    if (scanStatus.includes("password") || scanStatus.includes("username")) {
+      return "Checking for password and username controls.";
+    }
+    return "Analyzing code for security vulnerabilities.";
+  };
+
+  return (
+    <main className="flex h-full w-full bg-[#0E141A] text-white overflow-hidden flex-col">
+      <div className="flex-1 flex min-h-0 items-start gap-6 pt-0 px-8 overflow-hidden" style={{ boxSizing: 'border-box' }}>
+        <div className="flex flex-col flex-1 min-w-0 min-h-0" style={{ boxSizing: 'border-box' }}>
+          {/* File Path Bar with Scanning Button and Severity - Above Code Box */}
+          {currentFilePath && (
+            <div className="h-7.5 bg-[#0E141A] flex items-center justify-between flex-shrink-0 mb-0">
+              <div className="flex items-center gap-2">
+                <div className="h-2.5 w-2.5 rounded-full bg-[#6699C9]"></div>
+                <span className="text-sm bg-gradient-to-r from-[#6699C9] to-[#6699C9]/40 bg-clip-text text-transparent">{currentFilePath}</span>
+                <div className="flex items-center gap-1.5 rounded-lg bg-[#344F67]/40 px-1.5 py-0.2">
+                  <img src="/scan.svg" alt="scan" className="h-3 w-3" />
+                  <span className="text-[12px] text-[#6699C9]">Scanning</span>
+                </div>
               </div>
-            )}
-            <div className="flex items-center gap-1.5 rounded-full bg-gray-800 px-2.5 py-1 text-xs text-gray-400">
-              <Cpu className="h-3 w-3" />
-              <span>TS-Engine</span>
+              <div className="flex items-center gap-4">
+                <span className="text-xs text-[#D6D6D6] text-opacity-60 font-bold">Severity</span>
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-1.5">
+                    <div className="h-2.5 w-2.5 rounded-full bg-[#F1FA8C]"></div>
+                    <span className="text-xs text-[#D6D6D6] text-opacity-60">Low</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <div className="h-2.5 w-2.5 rounded-full bg-[#F1B24C]"></div>
+                    <span className="text-xs text-[#D6D6D6] text-opacity-60">Medium</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <div className="h-2.5 w-2.5 rounded-full bg-[#F14C4C]"></div>
+                    <span className="text-xs text-[#D6D6D6] text-opacity-60">High</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+          {/* Left Sidebar and Code Section in One Box */}
+          <div className="flex border border-[#D6D6D6] overflow-hidden" style={{ boxSizing: 'border-box', height: currentFilePath ? 'calc(100vh - 64px - 230px)' : 'calc(100vh - 96px - 234px)' }}>
+          {/* Left Sidebar - Suspicious Files */}
+          <div className="w-[150px] flex-shrink-0 bg-[#0E141A] flex flex-col">
+            <div className="p-3 flex-shrink-0">
+              <h2 className="text-xs font-semibold text-white flex items-center gap-2">
+                <span>Suspicious</span>
+              </h2>
+            </div>
+
+          {/* File List */}
+          <div className="flex-1 overflow-y-auto scrollbar-hide p-1.5">
+            <div className="space-y-0.5">
+              {displayFiles.map((file, i) => {
+                const isActive = i === currentFileIndex;
+                const isCompleted = file.status === "completed";
+                const isScanning = file.status === "scanning";
+                
+                return (
+                  <div
+                    key={file.name + i}
+                    onClick={() => onFileSelect?.(i)}
+                    className={`flex items-center gap-1.5 rounded px-1.5 py-1 text-xs cursor-pointer transition-colors ${
+                      isActive
+                        ? "bg-[#344F67] bg-opacity-40 text-[#6699C9]"
+                        : isCompleted
+                        ? "text-[#D6D6D6] text-opacity-60 hover:bg-white/5"
+                        : "text-[#D6D6D6] text-opacity-40 hover:bg-white/5"
+                    }`}
+                  >
+                    <img src="/file.svg" alt="file" className="h-3 w-3 flex-shrink-0" />
+                    <span className="flex-1 truncate">{file.name}</span>
+                    {isCompleted && (
+                      <CheckCircle className="h-3 w-3 flex-shrink-0 text-[#4CF177]" />
+                    )}
+                    {isActive && !isCompleted && (
+                      <div className="h-1.5 w-1.5 rounded-full bg-[#6699C9] flex-shrink-0"></div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>
 
-        {/* Code Area */}
-        <div className="flex-1 overflow-hidden p-8 flex items-center justify-center bg-[#0d1117]/50">
-          <div className="w-full max-w-4xl h-full overflow-hidden">
+            {/* Center - Code Editor */}
+            <div className="flex-1 flex flex-col min-w-0 min-h-0 bg-[#0E141A] border-l border-[#D6D6D6] overflow-hidden">
+
+          {/* Code Area */}
+          <div className="flex-1 overflow-hidden bg-[#0E141A] min-h-0 flex flex-col">
             <CodeScanner 
               code={initialCode || ""} 
               language="typescript" 
-              className="shadow-2xl ring-1 ring-white/5 bg-[#0d1117] backdrop-blur-sm h-full"
+              className="bg-[#0E141A] flex-1 min-h-0"
               annotations={currentAnnotations || []}
               onScanLine={handleScanLine}
               onScanStart={onScanStart}
@@ -231,148 +281,107 @@ export default function ScannerDemo({
             />
           </div>
         </div>
+        </div>
+        </div>
 
-        {/* Agent Logs Terminal */}
-        <div className="h-48 flex-shrink-0 border-t border-gray-800 bg-[#0a0d12] p-4">
-          <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-gray-500">
-            <Terminal className="h-3 w-3" />
-            <span>Agent Logs</span>
+        {/* Right Sidebar - Vulnerabilities */}
+        <div className="w-[280px] flex-shrink-0 bg-[#0E141A] flex flex-col overflow-hidden">
+          <div className="p-4 flex-shrink-0">
+            <h2 className="text-xs font-semibold text-white">Vulnerabilities</h2>
           </div>
-          <div className="h-[calc(100%-1.5rem)] overflow-y-auto font-mono text-xs text-gray-400 space-y-1 scrollbar-hide">
-            {logs.length === 0 && (
-              <span className="opacity-50 italic">Waiting for agent to start...</span>
-            )}
-            {logs.map((log, i) => (
-              <motion.div 
-                key={i}
-                initial={{ opacity: 0, x: -10 }}
-                animate={{ opacity: 1, x: 0 }}
-                className="flex gap-2"
+
+          {/* Filter Tabs */}
+          <div className="px-4 py-2 flex items-center gap-2 flex-shrink-0">
+            {(["all", "low", "medium", "high"] as const).map((filter) => (
+              <button
+                key={filter}
+                onClick={() => setVulnFilter(filter)}
+                className={`px-2 py-1 text-[10px] transition-colors ${
+                  vulnFilter === filter
+                    ? "text-white underline underline-offset-4 decoration-2"
+                    : "text-[#D6D6D6] text-opacity-60 hover:text-opacity-100"
+                }`}
               >
-                <span className="text-gray-600">{">"}</span>
-                <span className={log.includes("ALERT") ? "text-red-400" : log.includes("Verified") ? "text-green-400" : ""}>
-                  {log}
-                </span>
-              </motion.div>
+                {filter.charAt(0).toUpperCase() + filter.slice(1)}
+              </button>
             ))}
-            <div ref={logsEndRef} />
+          </div>
+
+          {/* Vulnerabilities List */}
+          <div className="flex-1 overflow-y-auto scrollbar-hide p-4">
+            <div className="space-y-3">
+              <AnimatePresence mode="popLayout">
+                {filteredVulnerabilities.map((vuln: any, i: number) => {
+                  const severity = (vuln.severity?.toLowerCase() || "medium");
+                  const isHigh = severity === "high" || severity === "critical";
+                  const isLow = severity === "low";
+                  const isMedium = severity === "medium";
+                  
+                  const severityColor = isHigh ? "text-[#F14C4C]" : isLow ? "text-[#F1FA8C]" : "text-[#F1B24C]";
+                  const severityText = isHigh ? "High" : isLow ? "Low" : "Medium";
+                  
+                  return (
+                    <motion.div
+                      key={`auth-${i}-${vuln.location}-${vuln.line || 0}`}
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, scale: 0.95 }}
+                      className="rounded-lg border border-[#D1D1D1] bg-[#0E141A] p-3"
+                    >
+                      <h3 className="text-xs font-medium text-white mb-2">
+                        {vuln.type || "Authentication Vulnerability"}
+                      </h3>
+                      <div className="flex items-center gap-2 mb-2">
+                        <AlertTriangle className={`h-3 w-3 ${isLow ? "text-[#F1FA8C]" : severityColor}`} />
+                        <span className={`text-[10px] ${isLow ? "text-[#4CF177]" : severityColor}`}>
+                          {severityText} Severity Vulnerability
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-[#D6D6D6] mb-2">
+                        {vuln.description || "No description available"}
+                      </p>
+                      <div className="flex items-center gap-1.5 text-[10px] text-[#D6D6D6] text-opacity-60">
+                        <FileText className="h-3 w-3" />
+                        <span>
+                          {vuln.location || vuln.file_path || "Unknown file"}
+                          {vuln.line && ` (Line ${vuln.line})`}
+                        </span>
+                      </div>
+                    </motion.div>
+                  );
+                })}
+              </AnimatePresence>
+              
+              {filteredVulnerabilities.length === 0 && (
+                <div className="py-8 text-center text-xs text-[#D6D6D6] text-opacity-40">
+                  <div className="mb-2 flex justify-center">
+                    <motion.div
+                      animate={{ rotate: 360 }}
+                      transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+                    >
+                      <FileText className="h-8 w-8 opacity-20" />
+                    </motion.div>
+                  </div>
+                  {vulnFilter === "all" ? "No vulnerabilities found" : `No ${vulnFilter} severity vulnerabilities`}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
 
-      {/* Right Sidebar - Vulnerabilities */}
-      <div className="w-80 flex-shrink-0 border-l border-gray-800 bg-[#0d1117] p-4 flex flex-col overflow-hidden">
-        <h2 className="mb-4 text-xs font-bold uppercase tracking-wider text-gray-500">Scan Results</h2>
-        <div className="space-y-3 overflow-y-auto flex-1 scrollbar-hide">
-          <AnimatePresence mode="popLayout">
-            {/* Auth Vulnerabilities from Agent */}
-            {authVulnerabilities.map((vuln: any, i: number) => {
-              const severity = vuln.severity?.toLowerCase() || "medium";
-              const isHigh = severity === "high" || severity === "critical";
-              const isLow = severity === "low";
-              
-              return (
-                <motion.div
-                  key={`auth-${i}-${vuln.location}-${vuln.line || 0}`}
-                  initial={{ opacity: 0, x: 20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, scale: 0.95 }}
-                  className={`rounded-lg border p-3 ${
-                    isHigh
-                      ? "border-red-500/20 bg-red-500/10"
-                      : isLow
-                      ? "border-yellow-500/20 bg-yellow-500/10"
-                      : "border-orange-500/20 bg-orange-500/10"
-                  }`}
-                >
-                  <div className="flex items-start gap-3">
-                    <div className={`mt-0.5 rounded p-1 ${
-                      isHigh
-                        ? "bg-red-500/20 text-red-400"
-                        : isLow
-                        ? "bg-yellow-500/20 text-yellow-400"
-                        : "bg-orange-500/20 text-orange-400"
-                    }`}>
-                      {isHigh ? <ShieldAlert className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <h3 className={`text-sm font-medium ${
-                        isHigh ? "text-red-200" : isLow ? "text-yellow-200" : "text-orange-200"
-                      }`}>
-                        {vuln.type || "Authentication Vulnerability"}
-                      </h3>
-                      <p className="mt-1 text-xs text-gray-400 line-clamp-2">
-                        {vuln.description || "No description available"}
-                      </p>
-                      <p className="mt-1 text-xs text-gray-500">
-                        {vuln.location?.split("/").pop() || "Unknown file"}
-                        {vuln.line && ` • Line ${vuln.line}`}
-                        {vuln.severity && ` • ${vuln.severity.toUpperCase()}`}
-                      </p>
-                    </div>
-                  </div>
-                </motion.div>
-              );
-            })}
-            
-            {/* Code scanning issues */}
-            {foundIssues.map((issue, i) => (
-              <motion.div
-                key={issue.line}
-                initial={{ opacity: 0, x: 20 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, scale: 0.95 }}
-                className={`rounded-lg border p-3 ${
-                  issue.type === "error"
-                    ? "border-red-500/20 bg-red-500/10"
-                    : issue.type === "warning"
-                    ? "border-yellow-500/20 bg-yellow-500/10"
-                    : "border-green-500/20 bg-green-500/10"
-                }`}
-              >
-                <div className="flex items-start gap-3">
-                  <div className={`mt-0.5 rounded p-1 ${
-                    issue.type === "error"
-                      ? "bg-red-500/20 text-red-400"
-                      : issue.type === "warning"
-                      ? "bg-yellow-500/20 text-yellow-400"
-                      : "bg-green-500/20 text-green-400"
-                  }`}>
-                    {issue.type === "error" ? <ShieldAlert className="h-4 w-4" /> :
-                     issue.type === "warning" ? <AlertTriangle className="h-4 w-4" /> :
-                     <CheckCircle className="h-4 w-4" />}
-                  </div>
-                  <div>
-                    <h3 className={`text-sm font-medium ${
-                      issue.type === "error" ? "text-red-200" :
-                      issue.type === "warning" ? "text-yellow-200" :
-                      "text-green-200"
-                    }`}>
-                      {issue.label}
-                    </h3>
-                    <p className="mt-1 text-xs text-gray-400">
-                      Line {issue.line} • {issue.type === "error" ? "Critical Severity" : "Passed"}
-                    </p>
-                  </div>
-                </div>
-              </motion.div>
-            ))}
-          </AnimatePresence>
-          
-          {foundIssues.length === 0 && authVulnerabilities.length === 0 && (
-            <div className="py-8 text-center text-sm text-gray-600">
-              <div className="mb-2 flex justify-center">
-                <motion.div
-                  animate={{ rotate: 360 }}
-                  transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
-                >
-                  <FileText className="h-8 w-8 opacity-20" />
-                </motion.div>
-              </div>
-              Scanning in progress...
-            </div>
-          )}
+      {/* Footer - Agent Activity */}
+      <div className="flex-shrink-0 min-h-[170px] py-8 flex items-center justify-between px-8">
+        <div className="flex-1">
+          <div className="flex items-center gap-2 text-sm text-[#D6D6D6]">
+            <span>{getAgentMessage()}</span>
+            <ChevronRight className="h-4 w-4 text-[#D6D6D6] text-opacity-60" />
+          </div>
+          <p className="text-xs text-[#D6D6D6] text-opacity-60 mt-2">{getAgentSubMessage()}</p>
         </div>
+        <button className="text-sm text-[#D6D6D6] text-opacity-60 hover:text-[#D6D6D6] hover:opacity-100 transition-colors underline underline-offset-2">
+          View Full Logs
+        </button>
       </div>
     </main>
   );
