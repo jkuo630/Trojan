@@ -5,6 +5,7 @@ import { createHighlighter, type ThemedToken } from "shiki";
 import { motion, AnimatePresence } from "framer-motion";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
+import { VulnerabilityPopUp, type VulnerabilityCardData } from "@/components/VulnerabilityPopUp";
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -24,7 +25,15 @@ interface CodeScannerProps {
   onScanLine?: (lineIndex: number) => void;
   onScanStart?: () => void; // Called when animation actually starts
   onScanComplete?: () => void;
+  onScanProgress?: (scannedLineIndex: number) => void; // Called when a line is scanned
   skipAnimation?: boolean; // If true, skip animation and show all lines as scanned
+  selectedLine?: number | null; // Line number (1-indexed) to show vulnerability popup for
+  selectedVulnerability?: VulnerabilityCardData | null; // Vulnerability data to display in popup
+  selectedVulnerabilityFixState?: "default" | "fixing" | "fixed" | "error"; // Fix state for selected vulnerability
+  selectedVulnerabilityPRUrl?: string | null; // PR URL for the selected vulnerability
+  repository?: string; // Repository in format "owner/repo"
+  onFix?: (data: VulnerabilityCardData) => void; // Handler for fix button click
+  onNext?: () => void; // Handler for "go to next vulnerability" button click
 }
 
 interface CodeLineProps {
@@ -54,6 +63,7 @@ const CodeLine = memo(function CodeLine({
         opacity: isPending ? 0.6 : 1,
         filter: isPending ? "blur(0.5px)" : "blur(0px)",
         backgroundColor:
+          // Remove isScanning highlight - using visualScanRect instead
           isScanned && annotation
             ? annotation.type === "error"
               ? "rgba(220, 38, 38, 0.15)"
@@ -77,7 +87,7 @@ const CodeLine = memo(function CodeLine({
       {/* Line Number */}
       <td
         className={cn(
-          "w-12 select-none pr-4 text-right align-top text-xs opacity-70 whitespace-nowrap relative pt-[5px]",
+          "w-12 select-none pr-4 text-right align-top text-[10px] opacity-70 whitespace-nowrap relative pt-[2px]",
           isScanning ? "text-cyan-400 font-bold" : "text-slate-600"
         )}
       >
@@ -85,7 +95,7 @@ const CodeLine = memo(function CodeLine({
       </td>
 
       {/* Code Line */}
-      <td className="relative align-top whitespace-pre-wrap break-all leading-6 w-full">
+      <td className="relative align-top whitespace-pre-wrap break-all leading-4 w-full">
         <span id={`code-span-${lineIndex}`} className="inline">
           {line.length === 0 ? (
             <span>&nbsp;</span>
@@ -97,24 +107,6 @@ const CodeLine = memo(function CodeLine({
             ))
           )}
         </span>
-
-        {/* Inline Annotation Label */}
-        <AnimatePresence>
-          {isScanned && annotation?.label && (
-            <motion.span
-              initial={{ opacity: 0, x: -10 }}
-              animate={{ opacity: 1, x: 0 }}
-              className={cn(
-                "ml-4 inline-flex items-center rounded px-2 py-0.5 text-xs font-medium",
-                annotation.type === "error" && "bg-red-500/20 text-red-200",
-                annotation.type === "success" && "bg-green-500/20 text-green-200",
-                annotation.type === "warning" && "bg-yellow-500/20 text-yellow-200"
-              )}
-            >
-              {annotation.label}
-            </motion.span>
-          )}
-        </AnimatePresence>
       </td>
     </motion.tr>
   );
@@ -128,7 +120,15 @@ export function CodeScanner({
   onScanLine,
   onScanStart,
   onScanComplete,
+  onScanProgress,
   skipAnimation = false,
+  selectedLine = null,
+  selectedVulnerability = null,
+  selectedVulnerabilityFixState = "default",
+  selectedVulnerabilityPRUrl = null,
+  repository,
+  onFix,
+  onNext,
 }: CodeScannerProps) {
   const [tokens, setTokens] = useState<ThemedToken[][]>([]);
   const [loading, setLoading] = useState(true);
@@ -138,10 +138,42 @@ export function CodeScanner({
     height: number;
   } | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const animationStartedRef = useRef(false);
+  const lastTokensKeyRef = useRef<string>('');
+  const onScanProgressRef = useRef(onScanProgress);
+  const onScanCompleteRef = useRef(onScanComplete);
+  const onScanStartRef = useRef(onScanStart);
+  const selectedLineRef = useRef<number | null>(null);
+  
+  // Update refs when callbacks change
+  useEffect(() => {
+    onScanProgressRef.current = onScanProgress;
+    onScanCompleteRef.current = onScanComplete;
+    onScanStartRef.current = onScanStart;
+  }, [onScanProgress, onScanComplete, onScanStart]);
 
   useEffect(() => {
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/d7ed34c7-a4a6-4f15-8a74-de07d29ed0ca',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CodeScanner.tsx:130',message:'Code prop changed - highlight effect triggered',data:{codeIsNull:code===null,codeIsUndefined:code===undefined,codeLength:code?.length||0,codeHash:code?code.substring(0,20)+'...':null},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
+    
     async function highlight() {
-      if (code === null || code === undefined) return;
+      if (code === null || code === undefined) {
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/d7ed34c7-a4a6-4f15-8a74-de07d29ed0ca',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CodeScanner.tsx:131',message:'Code is null/undefined, skipping highlight',data:{codeIsNull:code===null,codeIsUndefined:code===undefined},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+        // #endregion
+        return;
+      }
+
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/d7ed34c7-a4a6-4f15-8a74-de07d29ed0ca',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CodeScanner.tsx:138',message:'Starting code highlight',data:{codeLength:code.length,codePreview:code.substring(0,50)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+      // #endregion
+
+      // Reset animation state when code changes
+      animationStartedRef.current = false;
+      lastTokensKeyRef.current = ''; // Reset token key to allow new animation
+      setActiveLineIndex(-1);
+      setVisualScanRect(null);
 
       const highlighter = await createHighlighter({
         themes: ["github-dark"],
@@ -169,15 +201,61 @@ export function CodeScanner({
     highlight();
   }, [code, language]);
 
+  // Scroll to selected line when it changes
+  useEffect(() => {
+    if (selectedLine !== null && selectedLine !== selectedLineRef.current && containerRef.current && tokens.length > 0) {
+      selectedLineRef.current = selectedLine;
+      const lineIndex = selectedLine - 1; // Convert to 0-indexed
+      if (lineIndex >= 0 && lineIndex < tokens.length) {
+        const lineElement = document.getElementById(`line-${lineIndex}`);
+        if (lineElement && containerRef.current) {
+          const containerRect = containerRef.current.getBoundingClientRect();
+          const lineRect = lineElement.getBoundingClientRect();
+          const relativeTop = lineRect.top - containerRect.top + containerRef.current.scrollTop;
+          const scrollTarget = relativeTop - (containerRef.current.clientHeight / 2) + (lineRect.height / 2);
+          containerRef.current.scrollTo({ top: scrollTarget, behavior: "smooth" });
+        }
+      }
+    }
+  }, [selectedLine, tokens.length]);
+
   // Scanning Logic
   useEffect(() => {
-    if (loading || tokens.length === 0) return;
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/d7ed34c7-a4a6-4f15-8a74-de07d29ed0ca',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CodeScanner.tsx:159',message:'Scanning effect triggered',data:{loading,tokensLength:tokens.length,skipAnimation,annotationsCount:annotations.length,animationStarted:animationStartedRef.current},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+    // #endregion
+    if (loading || tokens.length === 0) {
+      // Reset animation state when code is loading or empty
+      animationStartedRef.current = false;
+      setActiveLineIndex(-1);
+      setVisualScanRect(null);
+      return;
+    }
 
     // If skipAnimation is true, immediately set to completed state
     if (skipAnimation) {
       setActiveLineIndex(tokens.length);
       setVisualScanRect(null);
-      onScanComplete?.();
+      onScanProgressRef.current?.(tokens.length - 1); // Notify that all lines are scanned
+      onScanCompleteRef.current?.();
+      animationStartedRef.current = true;
+      return;
+    }
+
+    // Check if this is new code (tokens changed) - if so, reset animation
+    const tokensKey = tokens.length > 0 ? `${tokens.length}-${tokens[0]?.length || 0}` : 'empty';
+    
+    if (tokensKey !== lastTokensKeyRef.current) {
+      // New code loaded, reset animation
+      animationStartedRef.current = false;
+      setActiveLineIndex(-1);
+      setVisualScanRect(null);
+      lastTokensKeyRef.current = tokensKey;
+    } else if (animationStartedRef.current) {
+      // Same code, animation already running - don't restart
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/d7ed34c7-a4a6-4f15-8a74-de07d29ed0ca',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CodeScanner.tsx:178',message:'Animation already started, skipping restart',data:{tokensKey},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+      // #endregion
       return;
     }
 
@@ -188,13 +266,16 @@ export function CodeScanner({
     let frameCount = 0; // Count frames to control speed
 
     const processFrame = () => {
-      const LINES_PER_FRAME = 0.15; // Lines per frame (fractional = slower)
+      const LINES_PER_FRAME = 24; // Lines per frame (fractional = slower)
       const FRAME_DELAY = Math.ceil(1 / LINES_PER_FRAME); // Process one step every N frames
       
       const container = containerRef.current;
       if (!container) return; // Should not happen if mounted
 
       frameCount++;
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/d7ed34c7-a4a6-4f15-8a74-de07d29ed0ca',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CodeScanner.tsx:184',message:'processFrame called',data:{frameCount,currentLogicalLine,currentVisualLine,tokensLength:tokens.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+      // #endregion
       
       // Only process one step every FRAME_DELAY frames (slows down animation)
       if (frameCount < FRAME_DELAY) {
@@ -230,7 +311,9 @@ export function CodeScanner({
         if (currentLogicalLine >= tokens.length) {
           setVisualScanRect(null);
           setActiveLineIndex(tokens.length);
-          onScanComplete?.();
+          // Report final line as scanned
+          onScanProgressRef.current?.(tokens.length - 1);
+          onScanCompleteRef.current?.();
           return; // Stop animation
         }
 
@@ -251,6 +334,11 @@ export function CodeScanner({
                 currentVisualLine++;
             } else {
                 // Done with this line, move to next
+                // Report progress when we finish scanning a line
+                // #region agent log
+                fetch('http://127.0.0.1:7242/ingest/d7ed34c7-a4a6-4f15-8a74-de07d29ed0ca',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CodeScanner.tsx:242',message:'Line scanned, calling onScanProgress',data:{lineIndex:currentLogicalLine,lineNumber:currentLogicalLine+1},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+                // #endregion
+                onScanProgressRef.current?.(currentLogicalLine);
                 currentLogicalLine++;
                 currentVisualLine = 0;
             }
@@ -265,6 +353,9 @@ export function CodeScanner({
       
       // Since the loop might have pushed currentLogicalLine past the end, clamp it or handle it
       if (currentLogicalLine < tokens.length) {
+          // #region agent log
+          fetch('http://127.0.0.1:7242/ingest/d7ed34c7-a4a6-4f15-8a74-de07d29ed0ca',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CodeScanner.tsx:257',message:'Setting activeLineIndex',data:{activeLineIndex:currentLogicalLine,lineNumber:currentLogicalLine+1},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+          // #endregion
           setActiveLineIndex(currentLogicalLine);
 
           // Calculate Scroll Position & Visual Rect
@@ -296,7 +387,7 @@ export function CodeScanner({
           // Final state if we overshot in the loop
            setVisualScanRect(null);
            setActiveLineIndex(tokens.length);
-           onScanComplete?.();
+           onScanCompleteRef.current?.();
            return;
       }
 
@@ -307,21 +398,27 @@ export function CodeScanner({
     // Start scanning
     // Small timeout to allow initial render/paint
     const timeoutId = setTimeout(() => {
-        onScanStart?.(); // Notify that animation is starting
+        animationStartedRef.current = true;
+        onScanStartRef.current?.(); // Notify that animation is starting
         animationFrameId = requestAnimationFrame(processFrame);
     }, 100);
 
     return () => {
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/d7ed34c7-a4a6-4f15-8a74-de07d29ed0ca',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CodeScanner.tsx:359',message:'Scanning effect cleanup - cancelling animation',data:{animationStarted:animationStartedRef.current,activeLineIndex,hasAnimationFrame:!!animationFrameId},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+        // #endregion
         clearTimeout(timeoutId);
         cancelAnimationFrame(animationFrameId);
+        // Don't reset animationStartedRef here - let it persist across re-renders
+        // Only reset when code actually changes (handled in the loading check above)
     };
-  }, [loading, tokens, annotations, skipAnimation, onScanStart, onScanComplete]);
+  }, [loading, tokens, skipAnimation]); // Removed callbacks from deps to prevent effect re-runs
 
   if (loading && (code === null || code === undefined)) {
     return (
       <div
         className={cn(
-          "relative overflow-hidden rounded-xl bg-[#0d1117] p-6 font-mono text-sm shadow-2xl h-full flex items-center justify-center",
+          "relative overflow-hidden rounded-xl bg-[#0E141A] p-6 font-mono text-[10px] shadow-2xl h-full flex items-center justify-center",
           className
         )}
       >
@@ -334,19 +431,18 @@ export function CodeScanner({
   }
 
   return (
-    <div
-      className={cn(
-        "relative overflow-hidden rounded-xl bg-[#0d1117] p-6 font-mono text-sm shadow-2xl",
-        className
-      )}
-    >
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-blue-900/10 via-transparent to-transparent opacity-40" />
+      <div
+        className={cn(
+          "relative overflow-hidden bg-[#0E141A] font-mono text-[10px] flex flex-col",
+          className
+        )}
+      >
 
       {/* Code Container */}
       <div
         ref={containerRef}
         id="code-container"
-        className="relative z-10 overflow-auto h-full scrollbar-hide"
+        className="relative z-10 overflow-auto flex-1 min-h-0 scrollbar-hide px-4 py-4"
       >
         {/* Floating Scan Highlight */}
         {visualScanRect && (
@@ -366,22 +462,46 @@ export function CodeScanner({
             {tokens.map((line, lineIndex) => {
               const lineNum = lineIndex + 1;
               const annotation = annotations.find((a) => a.line === lineNum);
+              const showVulnerabilityPopup = selectedLine === lineNum && selectedVulnerability !== null;
 
               // State for this line
               const isScanned = lineIndex < activeLineIndex;
               const isScanning = lineIndex === activeLineIndex;
               const isPending = lineIndex > activeLineIndex;
+              
+              // #region agent log
+              if (annotation) {
+                fetch('http://127.0.0.1:7242/ingest/d7ed34c7-a4a6-4f15-8a74-de07d29ed0ca',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'CodeScanner.tsx:373',message:'Line rendered with annotation',data:{lineIndex,lineNum,activeLineIndex,isScanned,isScanning,annotationType:annotation.type},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+              }
+              // #endregion
 
               return (
-                <CodeLine
-                  key={lineIndex}
-                  line={line}
-                  lineIndex={lineIndex}
-                  isScanned={isScanned}
-                  isScanning={isScanning}
-                  isPending={isPending}
-                  annotation={annotation}
-                />
+                <React.Fragment key={lineIndex}>
+                  <CodeLine
+                    line={line}
+                    lineIndex={lineIndex}
+                    isScanned={isScanned}
+                    isScanning={isScanning}
+                    isPending={isPending}
+                    annotation={annotation}
+                  />
+                  {showVulnerabilityPopup && selectedVulnerability && (
+                    <tr>
+                      <td colSpan={2} className="px-0 py-0">
+                        <div className="px-4 pt-3 pb-2">
+                          <VulnerabilityPopUp
+                            data={selectedVulnerability}
+                            state={selectedVulnerabilityFixState}
+                            prUrl={selectedVulnerabilityPRUrl}
+                            repository={repository}
+                            onFix={onFix}
+                            onNext={onNext}
+                          />
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
               );
             })}
           </tbody>

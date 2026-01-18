@@ -66,17 +66,35 @@ export async function POST(req: NextRequest) {
       base_branch: base_branch || "main",
     };
 
+    // Handle stdin write errors (EPIPE)
+    pythonProcess.stdin.on("error", (err: any) => {
+      if (err.code !== "EPIPE") {
+        console.error("Python process stdin error:", err);
+      }
+    });
+
     // Write input to stdin
-    pythonProcess.stdin.write(JSON.stringify(requestPayload));
-    pythonProcess.stdin.end();
+    try {
+      pythonProcess.stdin.write(JSON.stringify(requestPayload));
+      pythonProcess.stdin.end();
+    } catch (err: any) {
+      // Handle EPIPE errors when process has already ended
+      if (err.code !== "EPIPE") {
+        console.error("Error writing to Python process:", err);
+      }
+    }
 
     // Wait for process to complete
     const exitCode = await new Promise<number>((resolve, reject) => {
       pythonProcess.on("close", (code) => {
         resolve(code || 0);
       });
-      pythonProcess.on("error", (err) => {
-        reject(err);
+      pythonProcess.on("error", (err: any) => {
+        if (err.code !== "EPIPE") {
+          reject(err);
+        } else {
+          resolve(0); // EPIPE is expected if process ended unexpectedly
+        }
       });
     });
 

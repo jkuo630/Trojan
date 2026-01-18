@@ -65,9 +65,9 @@ export default function AuthCallbackPage() {
             console.warn("⚠️ No GitHub token found in session");
           }
 
-          // Redirect to projects page
-          console.log("🔄 Redirecting to /projects...");
-          router.push("/projects");
+          // Redirect to home page with synced flag
+          console.log("🔄 Redirecting to home page...");
+          router.push("/?synced=true");
         } else {
           console.warn("⚠️ No session found, redirecting to login");
           router.push("/auth/login");
@@ -86,7 +86,7 @@ export default function AuthCallbackPage() {
       <div className="flex flex-col items-center gap-4">
         <div className="relative">
           <div className="absolute inset-0 animate-pulse bg-blue-500/50 blur-xl rounded-full" />
-          <ShieldCheck className="relative h-16 w-16 text-blue-500 animate-spin" />
+          <ShieldCheck className="relative h-16 w-16 text-blue-500" />
         </div>
         <h2 className="text-xl font-semibold">Signing you in...</h2>
         <p className="text-gray-400">Please wait while we complete authentication</p>

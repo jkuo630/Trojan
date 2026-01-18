@@ -8,13 +8,16 @@ import { createServerClient } from "@/lib/supabase-server";
 // Helper to recursively get files from GitHub API
 async function getRepoFiles(owner: string, repo: string, treeSha = "main") {
   const url = `https://api.github.com/repos/${owner}/${repo}/git/trees/${treeSha}?recursive=1`;
+  const headers: HeadersInit = {
+    "User-Agent": "Trojan-Scanner-Bot",
+  };
+  
+  if (process.env.GITHUB_TOKEN) {
+    headers["Authorization"] = `Bearer ${process.env.GITHUB_TOKEN}`;
+  }
+  
   const res = await fetch(url, {
-    headers: {
-      // Add a user agent to avoid some rate limits
-      "User-Agent": "Trojan-Scanner-Bot",
-      // If you have a token, add it here:
-      // Authorization: `Bearer ${process.env.GITHUB_TOKEN}`
-    },
+    headers,
     next: { revalidate: 3600 } // Cache for 1 hour
   });
   
@@ -25,23 +28,23 @@ async function getRepoFiles(owner: string, repo: string, treeSha = "main") {
   }
   
   const data = await res.json();
-  
-  // Check if the tree was truncated (GitHub API limits to 100,000 entries)
-  if (data.truncated) {
-    console.warn(`GitHub tree was truncated. Only showing first ${data.tree.length} files.`);
-  }
-  
   return data.tree.filter((item: any) => item.type === "blob");
 }
 
 // Helper to fetch file content
 async function getFileContent(owner: string, repo: string, path: string) {
+  const headers: HeadersInit = {};
+  
+  if (process.env.GITHUB_TOKEN) {
+    headers["Authorization"] = `Bearer ${process.env.GITHUB_TOKEN}`;
+  }
+  
   const url = `https://raw.githubusercontent.com/${owner}/${repo}/main/${path}`;
-  const res = await fetch(url);
+  const res = await fetch(url, { headers });
   if (!res.ok) {
      // Try 'master' branch
      const masterUrl = `https://raw.githubusercontent.com/${owner}/${repo}/master/${path}`;
-     const resMaster = await fetch(masterUrl);
+     const resMaster = await fetch(masterUrl, { headers });
      if (!resMaster.ok) return "";
      return await resMaster.text();
   }
@@ -123,7 +126,8 @@ export async function POST(req: NextRequest) {
         const excludeDirs = /(node_modules|dist|build|coverage|\.git|\.next|\.vercel|public|assets|vendor|libs)/;
 
         return !excludeExts.test(path) && !excludeDirs.test(path);
-      });
+      })
+      .slice(0, 10); // increased limit slightly
 
     // 3. Process files in parallel
     const processPromises = codeFiles.map(async (file: any) => {
@@ -178,9 +182,23 @@ export async function POST(req: NextRequest) {
         stderr += data.toString();
       });
 
+      // Handle stdin write errors (EPIPE)
+      pythonProcess.stdin.on("error", (err: any) => {
+        if (err.code !== "EPIPE") {
+          console.error("Python process stdin error:", err);
+        }
+      });
+
       // Write input to stdin
-      pythonProcess.stdin.write(fileStructureJson);
-      pythonProcess.stdin.end();
+      try {
+        pythonProcess.stdin.write(fileStructureJson);
+        pythonProcess.stdin.end();
+      } catch (err: any) {
+        // Handle EPIPE errors when process has already ended
+        if (err.code !== "EPIPE") {
+          console.error("Error writing to Python process:", err);
+        }
+      }
 
       // Wait for process to complete
       await new Promise<void>((resolve, reject) => {

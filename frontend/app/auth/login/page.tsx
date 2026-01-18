@@ -26,7 +26,7 @@ export default function LoginPage() {
 
       if (error) throw error;
 
-      router.push("/projects");
+      router.push("/");
     } catch (err: any) {
       setError(err.message || "Failed to login");
     } finally {

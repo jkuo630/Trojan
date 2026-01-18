@@ -1,170 +1,202 @@
 "use client";
 
-import Link from "next/link";
-import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
-import { motion } from "framer-motion";
-import { ShieldCheck, ChevronRight, Play, Github, LogIn } from "lucide-react";
+import { useState, useEffect, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import Image from "next/image";
+import { Github, CheckCircle2, ArrowRight } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 
-export default function LandingPage() {
+function LandingPageContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const [showInput, setShowInput] = useState(false);
   const [repoUrl, setRepoUrl] = useState("");
   const [loading, setLoading] = useState(false);
   const [user, setUser] = useState<any>(null);
-  const [checkingAuth, setCheckingAuth] = useState(true);
+  const [justSynced, setJustSynced] = useState(false);
 
-  useEffect(() => {
-    // Check if user is logged in
-    supabase.auth.getUser().then(({ data }: { data: any }) => {
-      setUser(data.user);
-      setCheckingAuth(false);
-    });
+  const submitUrl = (url: string) => {
+    if (!url) return;
 
-    // Listen for auth changes
-    const { data: authListener } = supabase.auth.onAuthStateChange((event: any, session: any) => {
-      setUser(session?.user ?? null);
-    });
-
-    return () => {
-      authListener.subscription.unsubscribe();
-    };
-  }, []);
-
-  const handleScan = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!repoUrl) return;
-
-    // Basic validation to ensure it's a GitHub URL
-    if (!repoUrl.includes("github.com")) {
-      alert("Please enter a valid GitHub repository URL");
+    // Check if user is authenticated
+    if (!user) {
+      router.push("/auth/login");
       return;
     }
 
-    setLoading(true);
+    // Basic validation to ensure it's a GitHub URL
+    if (!url.includes("github.com")) {
+      return;
+    }
+
+    // Check if it's a valid GitHub repository URL pattern
+    const githubMatch = url.match(/github\.com\/([^/]+)\/([^/]+)/);
+    if (!githubMatch) {
+      return;
+    }
+
     // Encode the URL to pass it safely as a query parameter
-    const encodedUrl = encodeURIComponent(repoUrl);
+    const encodedUrl = encodeURIComponent(url);
     router.push(`/scan?url=${encodedUrl}`);
   };
 
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    submitUrl(repoUrl);
+  };
+
+  const handleGitHubLogin = async () => {
+    setLoading(true);
+
+    try {
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: "github",
+        options: {
+          redirectTo: `${window.location.origin}/auth/callback`,
+          scopes: "repo read:user", // Request repo access for GitHub API
+        },
+      });
+
+      if (error) throw error;
+      // The redirect will happen automatically, so we don't need to do anything else
+    } catch (err: any) {
+      console.error("Failed to login with GitHub:", err);
+      setLoading(false);
+      // Optionally show an error message to the user
+      alert("Failed to connect with GitHub. Please try again.");
+    }
+  };
+
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
+    setUser(null);
+    router.push("/");
+  };
+
+  // Get user display name
+  const getUserDisplayName = () => {
+    if (!user) return "";
+    return user.user_metadata?.full_name || 
+           user.user_metadata?.name || 
+           user.email?.split("@")[0] || 
+           "User";
+  };
+
+  // Check if user just synced GitHub
+  useEffect(() => {
+    const synced = searchParams.get("synced");
+    if (synced === "true") {
+      setJustSynced(true);
+      // Remove the query parameter from URL
+      router.replace("/", { scroll: false });
+      // Check auth status
+      supabase.auth.getUser().then(({ data }) => {
+        if (data.user) {
+          setUser(data.user);
+          // Auto-show input when synced
+          setShowInput(true);
+        }
+      });
+    } else {
+      // Check auth status normally
+      supabase.auth.getUser().then(({ data }) => {
+        if (data.user) {
+          setUser(data.user);
+        }
+      });
+    }
+  }, [searchParams, router]);
+
+
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center bg-[#0d1117] text-white overflow-hidden relative">
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-blue-900/20 via-[#0d1117] to-[#0d1117]" />
-      
-      {/* Grid Pattern */}
-      <div className="absolute inset-0 opacity-20" 
-           style={{ backgroundImage: 'linear-gradient(#30363d 1px, transparent 1px), linear-gradient(90deg, #30363d 1px, transparent 1px)', backgroundSize: '40px 40px' }} 
-      />
+    <main className="flex min-h-screen items-center justify-center bg-[#0d1117] text-white">
+      <div className="flex flex-col items-center justify-center text-center px-4">
+        {/* Logo */}
+        <div className="mb-4">
+          <Image
+            src="/horse.svg"
+            alt="Trojan Logo"
+            width={130}
+            height={130}
+            className="w-30 h-30"
+          />
+        </div>
 
-      <div className="relative z-10 max-w-5xl px-4 text-center">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.8 }}
-          className="flex justify-center mb-8"
-        >
-          <div className="relative">
-            <div className="absolute inset-0 animate-pulse bg-blue-500/50 blur-xl rounded-full" />
-            <ShieldCheck className="relative h-24 w-24 text-blue-500" />
-          </div>
-        </motion.div>
-
-        <motion.h1
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.8, delay: 0.2 }}
-          className="mb-6 text-6xl font-bold tracking-tight sm:text-8xl bg-gradient-to-br from-white via-blue-100 to-blue-500 bg-clip-text text-transparent"
-        >
+        {/* Title */}
+        <h1 className="mb-4 text-6xl font-bold uppercase tracking-tight sm:text-7xl text-white">
           TROJAN
-        </motion.h1>
+        </h1>
 
-        <motion.p
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.8, delay: 0.4 }}
-          className="mb-12 text-xl text-gray-400 sm:text-2xl max-w-2xl mx-auto"
-        >
-          Automated vulnerability scanning for your modern stack. 
-          Identify security risks in real-time with AI-powered static analysis.
-        </motion.p>
+        {/* Subtitle */}
+        <p className={`text-lg text-gray-300 font-normal max-w-md ${justSynced && user ? "mb-15" : "mb-30"}`}>
+        Agentic security testing for vibe-coded apps.
+        </p>
 
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.8, delay: 0.6 }}
-          className="w-full max-w-md mx-auto"
-        >
-          <form onSubmit={handleScan} className="flex flex-col gap-4">
-            <div className="relative group">
-              <div className="absolute inset-0 bg-gradient-to-r from-blue-600 to-cyan-600 rounded-lg blur opacity-25 group-hover:opacity-50 transition duration-1000"></div>
-              <div className="relative flex items-center bg-[#0d1117] rounded-lg border border-gray-700 p-1 focus-within:border-blue-500 transition-colors">
-                <Github className="ml-3 h-5 w-5 text-gray-500" />
+        {/* Success message after GitHub sync */}
+        {justSynced && user && (
+          <div className="mb-6 flex items-center gap-2 bg-green-500/10 border border-green-500/30 rounded-lg px-4 py-3 text-green-400">
+            <CheckCircle2 className="h-5 w-5 flex-shrink-0" />
+            <span className="text-sm">GitHub connected! Add a repository link below to get started.</span>
+          </div>
+        )}
+
+        {/* Connect to Github Button or Input */}
+        {!user ? (
+          <button 
+            onClick={handleGitHubLogin}
+            disabled={loading}
+            className="mb-4 flex items-center gap-3 bg-[#161b22] hover:bg-[#1c2128] border border-[#30363d] rounded-lg px-6 py-3 text-white font-medium transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Github className="h-5 w-5" />
+            <span>{loading ? "Connecting..." : "Sign in with GitHub"}</span>
+          </button>
+        ) : (
+          <>
+            <form onSubmit={handleSubmit} className="mb-2 w-full max-w-md">
+              <div className="flex items-center gap-2 bg-[#161b22] border border-[#30363d] rounded-lg px-4 py-3">
+                <Github className="h-5 w-5 text-gray-400 flex-shrink-0" />
                 <input
                   type="text"
                   value={repoUrl}
                   onChange={(e) => setRepoUrl(e.target.value)}
                   placeholder="https://github.com/username/repo..."
-                  className="w-full bg-transparent border-none px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:ring-0"
+                  className="flex-1 bg-transparent border-none text-white placeholder-gray-500 focus:outline-none focus:ring-0"
+                  autoFocus={justSynced}
                 />
                 <button
                   type="submit"
-                  disabled={loading}
-                  className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-md font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                  disabled={!repoUrl || !repoUrl.includes("github.com")}
+                  className="flex-shrink-0 p-1.5 bg-[#6699C9] hover:bg-[#5a8ab8] disabled:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed rounded transition-colors cursor-pointer"
+                  title="Submit"
                 >
-                  {loading ? "Loading..." : "Scan"}
-                  {!loading && <ChevronRight className="h-4 w-4" />}
+                  <ArrowRight className="h-4 w-4 text-white" />
                 </button>
               </div>
-            </div>
-          </form>
-          
-          <p className="mt-4 text-sm text-gray-500">
-            Paste a public GitHub repository URL to analyze the codebase.
-          </p>
-        </motion.div>
-
-        {/* Auth Section */}
-        {!checkingAuth && (
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.8, delay: 0.8 }}
-            className="mt-8"
-          >
-            {user ? (
-              <Link
-                href="/projects"
-                className="inline-flex items-center gap-2 text-gray-400 hover:text-white transition-colors"
+            </form>
+            <p className="text-xs text-gray-400 mb-4">
+              Signed in as {getUserDisplayName()},{" "}
+              <button
+                onClick={handleSignOut}
+                className="underline hover:text-gray-300 transition-colors cursor-pointer"
               >
-                <span>View Your Projects</span>
-                <ChevronRight className="h-4 w-4" />
-              </Link>
-            ) : (
-              <Link
-                href="/auth/login"
-                className="inline-flex items-center gap-2 text-blue-500 hover:text-blue-400 transition-colors"
-              >
-                <LogIn className="h-4 w-4" />
-                <span>Sign in to save your scans</span>
-              </Link>
-            )}
-          </motion.div>
+                Sign out?
+              </button>
+            </p>
+          </>
         )}
       </div>
-
-      {/* Decorative footer elements */}
-      <motion.div 
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ delay: 1, duration: 1 }}
-        className="absolute bottom-8 left-0 right-0 flex justify-center gap-8 text-xs text-gray-600 uppercase tracking-widest"
-      >
-        <span>Secure</span>
-        <span>•</span>
-        <span>Fast</span>
-        <span>•</span>
-        <span>Intelligent</span>
-      </motion.div>
     </main>
+  );
+}
+
+export default function LandingPage() {
+  return (
+    <Suspense fallback={
+      <main className="flex min-h-screen items-center justify-center bg-[#0d1117] text-white">
+        <div className="text-gray-400">Loading...</div>
+      </main>
+    }>
+      <LandingPageContent />
+    </Suspense>
   );
 }
