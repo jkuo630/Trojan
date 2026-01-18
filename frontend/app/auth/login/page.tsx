@@ -19,12 +19,22 @@ export default function LoginPage() {
     setError("");
 
     try {
+      // Ensure password meets complexity requirements
+      if (!/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)[a-zA-Z\d]{8,}$/.test(password)) {
+        throw new Error("Password must be at least 8 characters long, include an uppercase letter, a lowercase letter, and a number.");
+      }
+
       const { data, error } = await supabase.auth.signInWithPassword({
         email,
         password,
       });
 
       if (error) throw error;
+
+      // Check session expiration
+      if (!data.session || new Date(data.session.expires_at * 1000) < new Date()) {
+        throw new Error("Session expired. Please log in again.");
+      }
 
       router.push("/projects");
     } catch (err: any) {
