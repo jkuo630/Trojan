@@ -5,28 +5,35 @@ import traverse from "@babel/traverse";
 import path from "path";
 import { createServerClient } from "@/lib/supabase-server";
 
+// Middleware to ensure authentication
+async function authenticateRequest(req: NextRequest) {
+  const supabase = createServerClient();
+  const { data: { user }, error } = await supabase.auth.getUser();
+  if (error || !user) {
+    return { authenticated: false, user: null };
+  }
+  return { authenticated: true, user };
+}
+
 // Helper to recursively get files from GitHub API
 async function getRepoFiles(owner: string, repo: string, treeSha = "main") {
   const url = `https://api.github.com/repos/${owner}/${repo}/git/trees/${treeSha}?recursive=1`;
   const res = await fetch(url, {
     headers: {
-      // Add a user agent to avoid some rate limits
       "User-Agent": "Trojan-Scanner-Bot",
-      // If you have a token, add it here:
-      // Authorization: `Bearer ${process.env.GITHUB_TOKEN}`
+      // Authorization header is now required
+      Authorization: `Bearer ${process.env.GITHUB_TOKEN}`
     },
     next: { revalidate: 3600 } // Cache for 1 hour
   });
   
   if (!res.ok) {
-    // Try 'master' if 'main' fails
     if (treeSha === "main") return getRepoFiles(owner, repo, "master");
     throw new Error(`Failed to fetch tree: ${res.statusText}`);
   }
   
   const data = await res.json();
   
-  // Check if the tree was truncated (GitHub API limits to 100,000 entries)
   if (data.truncated) {
     console.warn(`GitHub tree was truncated. Only showing first ${data.tree.length} files.`);
   }
@@ -39,7 +46,6 @@ async function getFileContent(owner: string, repo: string, path: string) {
   const url = `https://raw.githubusercontent.com/${owner}/${repo}/main/${path}`;
   const res = await fetch(url);
   if (!res.ok) {
-     // Try 'master' branch
      const masterUrl = `https://raw.githubusercontent.com/${owner}/${repo}/master/${path}`;
      const resMaster = await fetch(masterUrl);
      if (!resMaster.ok) return "";
@@ -51,7 +57,6 @@ async function getFileContent(owner: string, repo: string, path: string) {
 function extractFunctions(code: string, fileName: string): string[] {
   const functions: string[] = [];
   
-  // Skip non-JS/TS files
   if (!/\.(js|jsx|ts|tsx)$/.test(fileName)) return functions;
 
   try {
@@ -60,7 +65,6 @@ function extractFunctions(code: string, fileName: string): string[] {
       plugins: ["typescript", "jsx"],
     });
 
-    // @ts-ignore - Babel traverse types can be tricky with ESM
     const traverseFn = traverse.default || traverse;
     
     traverseFn(ast, {
@@ -92,14 +96,24 @@ function extractFunctions(code: string, fileName: string): string[] {
 
 export async function POST(req: NextRequest) {
   try {
+    // Check authentication
+    const { authenticated, user } = await authenticateRequest(req);
+    if (!authenticated) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const body = await req.json();
-    const { url } = body;
+    const { url, github_token } = body;
 
     if (!url) {
       return NextResponse.json({ error: "URL is required" }, { status: 400 });
     }
 
-    // Clean URL: remove /tree/main, /blob/main, etc to get base repo URL
+    // Validate GitHub token
+    if (!github_token || !/^[a-zA-Z0-9_]+$/.test(github_token)) {
+      return NextResponse.json({ error: "Invalid GitHub token" }, { status: 400 });
+    }
+
     const cleanUrl = url.replace(/\/tree\/.*$/, "").replace(/\/blob\/.*$/, "");
     const match = cleanUrl.match(/github\.com\/([^/]+)\/([^/]+)/);
     
@@ -109,23 +123,22 @@ export async function POST(req: NextRequest) {
 
     const [_, owner, repo] = match;
 
-    // 1. Get File Tree
+    // Check user authorization to analyze the repository
+    if (!user.permissions.includes('analyze_repo')) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+
     const files = await getRepoFiles(owner, repo);
     
-    // 2. Filter out irrelevant files (images, configs, locks, etc)
     const codeFiles = files
       .filter((f: any) => {
         const path = f.path.toLowerCase();
-        // Exclude common non-code / binary / config extensions
         const excludeExts = /\.(png|jpg|jpeg|gif|svg|ico|pdf|zip|tar|gz|json|lock|md|txt|xml|yaml|yml|css|scss|less|html|map|ttf|woff|woff2|eot|mp4|webm|mp3|ds_store)$/;
-        
-        // Exclude common generated/config directories
         const excludeDirs = /(node_modules|dist|build|coverage|\.git|\.next|\.vercel|public|assets|vendor|libs)/;
 
         return !excludeExts.test(path) && !excludeDirs.test(path);
       });
 
-    // 3. Process files in parallel
     const processPromises = codeFiles.map(async (file: any) => {
       try {
         const content = await getFileContent(owner, repo, file.path);
@@ -144,7 +157,6 @@ export async function POST(req: NextRequest) {
 
     const processedFiles = (await Promise.all(processPromises)).filter(Boolean);
 
-    // 4. Call LangGraph agent to identify suspicious files and analyze auth vulnerabilities
     let suspiciousFiles: any[] = [];
     let authVulnerabilities: any[] = [];
     try {
@@ -156,10 +168,8 @@ export async function POST(req: NextRequest) {
         "run_agent.py"
       );
       
-      // Prepare the file structure as JSON
       const fileStructureJson = JSON.stringify(processedFiles);
       
-      // Execute Python script with file structure as stdin using spawn
       const pythonProcess = spawn("python3", [agentScriptPath], {
         env: {
           ...process.env,
@@ -178,11 +188,9 @@ export async function POST(req: NextRequest) {
         stderr += data.toString();
       });
 
-      // Write input to stdin
       pythonProcess.stdin.write(fileStructureJson);
       pythonProcess.stdin.end();
 
-      // Wait for process to complete
       await new Promise<void>((resolve, reject) => {
         pythonProcess.on("close", (code) => {
           if (code === 0) {
@@ -194,25 +202,19 @@ export async function POST(req: NextRequest) {
         pythonProcess.on("error", reject);
       });
 
-      // Parse the output (now includes both suspicious_files and auth_vulnerabilities)
       if (stdout) {
         try {
           const output = JSON.parse(stdout.trim());
-          // Handle both old format (array) and new format (object)
           if (Array.isArray(output)) {
-            // Old format - just suspicious files array
             suspiciousFiles = output;
             authVulnerabilities = [];
           } else if (output.error) {
-            // Error response
             throw new Error(output.error);
           } else {
-            // New format - object with suspicious_files and auth_vulnerabilities
             suspiciousFiles = output.suspicious_files || [];
             authVulnerabilities = output.auth_vulnerabilities || [];
           }
         } catch (parseError: any) {
-          // If parsing fails, check if it's an error message
           if (stdout.includes("error") || stdout.includes("Error") || stdout.includes("quota")) {
             console.error("Agent returned error:", stdout);
             throw new Error(stdout.trim());
@@ -223,7 +225,6 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // Output to terminal
       console.log("\n=== SECURITY RISK ASSESSMENT ===");
       console.log(`Repository: ${owner}/${repo}`);
       console.log(`Total files analyzed: ${processedFiles.length}`);
@@ -264,10 +265,8 @@ export async function POST(req: NextRequest) {
       }
     } catch (agentError: any) {
       console.error("Error running security agent:", agentError);
-      // Continue even if agent fails - return file structure anyway
     }
 
-    // 5. Save project to Supabase if user is authenticated
     let projectId: string | null = null;
     try {
       const supabase = createServerClient();
@@ -297,10 +296,8 @@ export async function POST(req: NextRequest) {
       }
     } catch (saveError) {
       console.error("Error saving project:", saveError);
-      // Continue even if save fails
     }
 
-    // Return file structure, suspicious files, auth vulnerabilities, plus project ID if saved
     return NextResponse.json({
       file_structure: processedFiles,
       suspicious_files: suspiciousFiles,
