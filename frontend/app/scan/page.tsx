@@ -303,6 +303,27 @@ function ScanContent() {
     }
   };
 
+  // Password policy enforcement function
+  const enforcePasswordPolicy = (password) => {
+    const minLength = 8;
+    const complexityRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&#])[A-Za-z\d@$!%*?&#]{8,}$/;
+    const commonPasswords = ["123456", "password", "123456789", "12345678", "12345", "1234567", "qwerty", "abc123", "111111", "123123"];
+
+    if (password.length < minLength) {
+      return false;
+    }
+
+    if (!complexityRegex.test(password)) {
+      return false;
+    }
+
+    if (commonPasswords.includes(password)) {
+      return false;
+    }
+
+    return true;
+  };
+
   return (
     <div className="min-h-screen bg-[#0d1117] text-white flex flex-col">
       {/* Header */}
