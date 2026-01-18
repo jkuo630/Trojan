@@ -44,9 +44,9 @@ Focus on finding:
 
 IMPORTANT: You MUST provide the exact line number for each vulnerability found. Analyze the code content carefully and identify the specific line where the vulnerability exists.
 
-Return JSON array of vulnerabilities found. Each entry MUST include: line (integer line number, not null), type (string - e.g., "SQL Injection", "Command Injection"), severity (high/medium/low), description (string - detailed explanation up to 3 sentences), location (file path).
+Return JSON array of vulnerabilities found. Each entry MUST include: line (integer line number, not null), type (string - e.g., "SQL Injection", "Command Injection"), severity (high/medium/low), description (string - concise one sentence explanation), location (file path).
 
-DESCRIPTION REQUIREMENTS: The description field must be detailed and informative, explaining what the vulnerability is, why it's a security risk, and what the potential impact could be. Do NOT suggest specific code fixes - only describe the security issue and its risks. Use up to 3 sentences to provide comprehensive context."""
+DESCRIPTION REQUIREMENTS: The description field must be concise and informative, explaining what the vulnerability is and why it's a security risk in a single sentence. Do NOT suggest specific code fixes - only describe the security issue and its risks. Keep it to exactly one sentence."""
 
     if file_content:
         user_prompt = f"""Analyze this file for injection vulnerabilities:
@@ -74,12 +74,12 @@ Example format:
     "line": 67,
     "type": "Command Injection",
     "severity": "high",
-    "description": "os.system() called with user-controlled input without sanitization at line 67, allowing attackers to execute arbitrary system commands. This critical vulnerability could enable complete server compromise, data theft, or deployment of malware.",
+    "description": "os.system() called with user-controlled input without sanitization at line 67, allowing attackers to execute arbitrary system commands.",
     "location": "{file_path}"
   }}
 ]
 
-If no vulnerabilities found, return empty array []. Be specific about what injection issues you identify and ALWAYS include the line number. Provide detailed descriptions (up to 3 sentences) explaining the vulnerability and its security risks."""
+If no vulnerabilities found, return empty array []. Be specific about what injection issues you identify and ALWAYS include the line number. Provide concise one-sentence descriptions explaining the vulnerability and its security risks."""
     else:
         user_prompt = f"""Analyze this file for injection vulnerabilities:
 
@@ -102,7 +102,7 @@ Example format:
   }}
 ]
 
-If no vulnerabilities found, return empty array []. Be specific about what injection issues you identify. Provide detailed descriptions (up to 3 sentences) explaining the vulnerability and its security risks."""
+If no vulnerabilities found, return empty array []. Be specific about what injection issues you identify. Provide concise one-sentence descriptions explaining the vulnerability and its security risks."""
 
     messages = [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
     response = model.invoke(messages)

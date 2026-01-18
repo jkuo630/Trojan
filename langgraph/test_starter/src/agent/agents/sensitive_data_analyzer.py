@@ -45,9 +45,9 @@ Focus on finding:
 
 IMPORTANT: You MUST provide the exact line number for each vulnerability found. Analyze the code content carefully and identify the specific line where the sensitive data is exposed.
 
-Return JSON array of vulnerabilities found. Each entry MUST include: line (integer line number, not null), type (string - e.g., "Hardcoded API Key", "Plaintext Password"), severity (high/medium/low), description (string - detailed explanation up to 3 sentences), location (file path).
+Return JSON array of vulnerabilities found. Each entry MUST include: line (integer line number, not null), type (string - e.g., "Hardcoded API Key", "Plaintext Password"), severity (high/medium/low), description (string - concise one sentence explanation), location (file path).
 
-DESCRIPTION REQUIREMENTS: The description field must be detailed and informative, explaining what the vulnerability is, why it's a security risk, and what the potential impact could be. Do NOT suggest specific code fixes - only describe the security issue and its risks. Use up to 3 sentences to provide comprehensive context."""
+DESCRIPTION REQUIREMENTS: The description field must be concise and informative, explaining what the vulnerability is and why it's a security risk in a single sentence. Do NOT suggest specific code fixes - only describe the security issue and its risks. Keep it to exactly one sentence."""
 
     if file_content:
         user_prompt = f"""Analyze this file for sensitive data exposure vulnerabilities:
@@ -68,26 +68,26 @@ Example format:
     "line": 42,
     "type": "Hardcoded API Key",
     "severity": "high",
-    "description": "API key hardcoded in source code at line 42: 'sk_live_1234567890abcdef'. Hardcoded credentials in source code pose a severe security risk as they can be exposed through version control systems, code repositories, or insider threats. If this key is leaked, attackers could gain unauthorized access to third-party services, potentially leading to data breaches or financial loss.",
+    "description": "API key hardcoded in source code at line 42, posing a severe security risk if exposed through version control or code repositories.",
     "location": "{file_path}"
   }},
   {{
     "line": 89,
     "type": "Plaintext Password",
     "severity": "high",
-    "description": "Database password stored in plaintext variable at line 89, exposing sensitive credentials in the application code. Plaintext passwords can be easily discovered by anyone with access to the codebase, including through code reviews, version control history, or compromised repositories. If an attacker gains access to this password, they could directly connect to the database and access, modify, or delete all stored data.",
+    "description": "Database password stored in plaintext variable at line 89, exposing sensitive credentials that could be discovered through code reviews or version control.",
     "location": "{file_path}"
   }},
   {{
     "line": 156,
     "type": "Sensitive Data in Logs",
     "severity": "medium",
-    "description": "Credit card number logged in console.log at line 156, exposing sensitive payment information that could be accessed by anyone with log file access. This violates PCI-DSS compliance and creates a significant data breach risk.",
+    "description": "Credit card number logged in console.log at line 156, exposing sensitive payment information that violates PCI-DSS compliance.",
     "location": "{file_path}"
   }}
 ]
 
-If no vulnerabilities found, return empty array []. Be specific about what sensitive data is exposed and ALWAYS include the line number. Provide detailed descriptions (up to 3 sentences) explaining the vulnerability and its security risks."""
+If no vulnerabilities found, return empty array []. Be specific about what sensitive data is exposed and ALWAYS include the line number. Provide concise one-sentence descriptions explaining the vulnerability and its security risks."""
     else:
         user_prompt = f"""Analyze this file for sensitive data exposure vulnerabilities:
 
@@ -110,7 +110,7 @@ Example format:
   }}
 ]
 
-If no vulnerabilities found, return empty array []. Be specific about what sensitive data issues you identify. Provide detailed descriptions (up to 3 sentences) explaining the vulnerability and its security risks."""
+If no vulnerabilities found, return empty array []. Be specific about what sensitive data issues you identify. Provide concise one-sentence descriptions explaining the vulnerability and its security risks."""
 
     messages = [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
     response = model.invoke(messages)
