@@ -54,9 +54,7 @@ const CodeLine = memo(function CodeLine({
         opacity: isPending ? 0.6 : 1,
         filter: isPending ? "blur(0.5px)" : "blur(0px)",
         backgroundColor:
-          isScanning
-            ? "rgba(102, 153, 201, 0.15)" // Light blue highlight for scanning line (#6699C9)
-            : isScanned && annotation
+          isScanned && annotation
             ? annotation.type === "error"
               ? "rgba(220, 38, 38, 0.15)"
               : annotation.type === "success"
@@ -79,7 +77,7 @@ const CodeLine = memo(function CodeLine({
       {/* Line Number */}
       <td
         className={cn(
-          "w-12 select-none pr-4 text-right align-top text-[10px] opacity-70 whitespace-nowrap relative pt-[2px]",
+          "w-12 select-none pr-4 text-right align-top text-xs opacity-70 whitespace-nowrap relative pt-[5px]",
           isScanning ? "text-cyan-400 font-bold" : "text-slate-600"
         )}
       >
@@ -87,7 +85,7 @@ const CodeLine = memo(function CodeLine({
       </td>
 
       {/* Code Line */}
-      <td className="relative align-top whitespace-pre-wrap break-all leading-4 w-full">
+      <td className="relative align-top whitespace-pre-wrap break-all leading-6 w-full">
         <span id={`code-span-${lineIndex}`} className="inline">
           {line.length === 0 ? (
             <span>&nbsp;</span>
@@ -99,6 +97,24 @@ const CodeLine = memo(function CodeLine({
             ))
           )}
         </span>
+
+        {/* Inline Annotation Label */}
+        <AnimatePresence>
+          {isScanned && annotation?.label && (
+            <motion.span
+              initial={{ opacity: 0, x: -10 }}
+              animate={{ opacity: 1, x: 0 }}
+              className={cn(
+                "ml-4 inline-flex items-center rounded px-2 py-0.5 text-xs font-medium",
+                annotation.type === "error" && "bg-red-500/20 text-red-200",
+                annotation.type === "success" && "bg-green-500/20 text-green-200",
+                annotation.type === "warning" && "bg-yellow-500/20 text-yellow-200"
+              )}
+            >
+              {annotation.label}
+            </motion.span>
+          )}
+        </AnimatePresence>
       </td>
     </motion.tr>
   );
@@ -305,7 +321,7 @@ export function CodeScanner({
     return (
       <div
         className={cn(
-          "relative overflow-hidden rounded-xl bg-[#0E141A] p-6 font-mono text-[10px] shadow-2xl h-full flex items-center justify-center",
+          "relative overflow-hidden rounded-xl bg-[#0d1117] p-6 font-mono text-sm shadow-2xl h-full flex items-center justify-center",
           className
         )}
       >
@@ -318,18 +334,19 @@ export function CodeScanner({
   }
 
   return (
-      <div
-        className={cn(
-          "relative overflow-hidden bg-[#0E141A] font-mono text-[10px] flex flex-col",
-          className
-        )}
-      >
+    <div
+      className={cn(
+        "relative overflow-hidden rounded-xl bg-[#0d1117] p-6 font-mono text-sm shadow-2xl",
+        className
+      )}
+    >
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-blue-900/10 via-transparent to-transparent opacity-40" />
 
       {/* Code Container */}
       <div
         ref={containerRef}
         id="code-container"
-        className="relative z-10 overflow-auto flex-1 min-h-0 scrollbar-hide px-4 py-4"
+        className="relative z-10 overflow-auto h-full scrollbar-hide"
       >
         {/* Floating Scan Highlight */}
         {visualScanRect && (
