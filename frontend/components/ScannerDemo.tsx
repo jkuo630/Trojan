@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import type React from "react";
 import { CodeScanner, type CodeAnnotation } from "@/components/CodeScanner";
-import { FileCode, ShieldAlert, CheckCircle, AlertTriangle, FileText, ChevronRight, Terminal, Cpu, Activity, Key, Lock, Database, DatabaseZap, Code as CodeIcon, Shell, EyeOff, KeyRound, LockKeyhole } from "lucide-react";
+import { FileCode, ShieldAlert, CheckCircle, AlertTriangle, FileText, ChevronRight, Terminal, Cpu, Activity, Key, Lock, Database, DatabaseZap, Code as CodeIcon, Shell, EyeOff, KeyRound, LockKeyhole, Wrench, ExternalLink } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { submitFixToBackend, type FileAnalysisData } from "@/types/security-fix";
 
@@ -100,6 +100,7 @@ export default function ScannerDemo({
   const [foundIssues, setFoundIssues] = useState<CodeAnnotation[]>([]);
   const [logs, setLogs] = useState<string[]>([]);
   const logsEndRef = useRef<HTMLDivElement>(null);
+  const completionLoggedRef = useRef<boolean>(false);
   const [fixingVulnerability, setFixingVulnerability] = useState<number | null>(null);
   const [fixResults, setFixResults] = useState<Map<number, { success: boolean; message: string; pr_url?: string }>>(new Map());
 
@@ -187,6 +188,21 @@ export default function ScannerDemo({
   useEffect(() => {
     logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [logs]);
+
+  // Effect to detect when all files are completed and log completion message
+  useEffect(() => {
+    if (repoFiles && repoFiles.length > 0 && completedFiles.size === repoFiles.length && !completionLoggedRef.current) {
+      const totalVulnerabilities = authVulnerabilities.length;
+      
+      const completionMessages = [
+        `[${new Date().toLocaleTimeString().split(' ')[0]}] ✓ Scan completed - All ${repoFiles.length} file(s) analyzed`,
+        `[${new Date().toLocaleTimeString().split(' ')[0]}] Total vulnerabilities identified: ${totalVulnerabilities}`
+      ];
+      
+      setLogs(prev => [...prev, ...completionMessages]);
+      completionLoggedRef.current = true;
+    }
+  }, [completedFiles, repoFiles, authVulnerabilities.length]);
 
   const handleScanLine = (lineIndex: number) => {
     // Check if the current line (lineIndex + 1) has an annotation
