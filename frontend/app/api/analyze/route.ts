@@ -3,6 +3,7 @@ import { spawn } from "child_process";
 import * as parser from "@babel/parser";
 import traverse from "@babel/traverse";
 import path from "path";
+import { createServerClient } from "@/lib/supabase-server";
 
 // Helper to recursively get files from GitHub API
 async function getRepoFiles(owner: string, repo: string, treeSha = "main") {
@@ -226,10 +227,44 @@ export async function POST(req: NextRequest) {
       // Continue even if agent fails - return file structure anyway
     }
 
-    // Return both file structure and suspicious files
+    // 5. Save project to Supabase if user is authenticated
+    let projectId: string | null = null;
+    try {
+      const supabase = createServerClient();
+      const { data: { user } } = await supabase.auth.getUser();
+
+      if (user) {
+        const repositoryName = `${owner}/${repo}`;
+        const { data, error } = await supabase
+          .from("projects")
+          .insert({
+            user_id: user.id,
+            github_url: cleanUrl,
+            repository_name: repositoryName,
+            file_structure: processedFiles,
+            suspicious_files: suspiciousFiles,
+            status: "completed",
+          })
+          .select()
+          .single();
+
+        if (!error && data) {
+          projectId = data.id;
+          console.log(`Project saved to Supabase: ${projectId}`);
+        } else {
+          console.error("Error saving project to Supabase:", error);
+        }
+      }
+    } catch (saveError) {
+      console.error("Error saving project:", saveError);
+      // Continue even if save fails
+    }
+
+    // Return both file structure and suspicious files, plus project ID if saved
     return NextResponse.json({
       file_structure: processedFiles,
       suspicious_files: suspiciousFiles,
+      project_id: projectId,
     });
 
   } catch (error) {
