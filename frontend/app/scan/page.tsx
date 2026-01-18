@@ -217,7 +217,19 @@ function ScanContent() {
       }
     };
 
-    startScan();
+    // Added authentication check before starting the scan
+    const isAuthenticated = () => {
+      // Implement your authentication logic here
+      // This is a placeholder for actual authentication check
+      return !!localStorage.getItem('authToken');
+    };
+
+    if (isAuthenticated()) {
+      startScan();
+    } else {
+      setScanStatus("Authentication required. Please log in.");
+      setIsLoading(false);
+    }
   }, [repoUrl]);
 
   // Fetch content when current file changes (for repo mode)
