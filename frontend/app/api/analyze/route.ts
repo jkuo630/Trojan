@@ -25,6 +25,12 @@ async function getRepoFiles(owner: string, repo: string, treeSha = "main") {
   }
   
   const data = await res.json();
+  
+  // Check if the tree was truncated (GitHub API limits to 100,000 entries)
+  if (data.truncated) {
+    console.warn(`GitHub tree was truncated. Only showing first ${data.tree.length} files.`);
+  }
+  
   return data.tree.filter((item: any) => item.type === "blob");
 }
 
@@ -117,8 +123,7 @@ export async function POST(req: NextRequest) {
         const excludeDirs = /(node_modules|dist|build|coverage|\.git|\.next|\.vercel|public|assets|vendor|libs)/;
 
         return !excludeExts.test(path) && !excludeDirs.test(path);
-      })
-      .slice(0, 10); // increased limit slightly
+      });
 
     // 3. Process files in parallel
     const processPromises = codeFiles.map(async (file: any) => {
