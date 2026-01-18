@@ -5,64 +5,20 @@ import { CodeScanner, type CodeAnnotation } from "@/components/CodeScanner";
 import { FileCode, ShieldAlert, CheckCircle, AlertTriangle, FileText, ChevronRight, Terminal, Cpu, Activity } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
-const sampleCode = `interface User {
-  id: string;
-  name: string;
-  role: "admin" | "user";
-}
-
-function validateUser(user: User): boolean {
-  // Check if user has valid permissions
-  if (user.role === "admin") {
-    console.log("Access granted: Admin level");
-    return true;
-  }
-  
-  if (user.role === "user") {
-    console.log("Access granted: User level");
-    return true;
-  }
-
-  // Security vulnerability found here
-  eval(user.name); // Dangerous execution
-  return false;
-}
-
-// Initialize system scan
-const currentUser: User = {
-  id: "u_123456",
-  name: "Alex Chen",
-  role: "admin"
-};
-
-validateUser(currentUser);
-`;
-
-const annotations: CodeAnnotation[] = [
-  { line: 9, type: "success", label: "Valid Role Check" },
-  { line: 10, type: "success" },
-  { line: 11, type: "success" },
-  { line: 20, type: "error", label: "Remote Code Execution Risk" },
-  { line: 21, type: "error" },
-];
-
-const scanLogs = [
-  { line: 0, message: "Initializing analysis engine v2.4.0..." },
-  { line: 2, message: "Parsing AST for 'user.ts'..." },
-  { line: 8, message: "Analyzing control flow: validateUser()" },
-  { line: 10, message: "Verifying RBAC implementation..." },
-  { line: 19, message: "Scanning for unsafe patterns..." },
-  { line: 20, message: "⚠ ALERT: Dangerous sink 'eval' detected" },
-  { line: 21, message: "Tracing data flow from 'user.name'..." },
-  { line: 32, message: "Analysis complete. Generating report." }
-];
+const scanLogs: { line: number; message: string }[] = [];
 
 interface ScannerDemoProps {
   initialCode?: string | null;
-  repoFiles?: { name: string; path: string; functions?: string[] }[];
+  repoFiles?: { 
+    name: string; 
+    path: string; 
+    functions?: string[];
+    vulnerabilities?: CodeAnnotation[];
+  }[];
   currentFileIndex?: number;
   onFileSelect?: (index: number) => void;
   onScanComplete?: () => void;
+  wsConnected?: boolean;
 }
 
 export default function ScannerDemo({ 
@@ -70,11 +26,22 @@ export default function ScannerDemo({
   repoFiles, 
   currentFileIndex = 0,
   onFileSelect,
-  onScanComplete
+  onScanComplete,
+  wsConnected = false
 }: ScannerDemoProps) {
   const [foundIssues, setFoundIssues] = useState<CodeAnnotation[]>([]);
   const [logs, setLogs] = useState<string[]>([]);
   const logsEndRef = useRef<HTMLDivElement>(null);
+
+  // Get current file annotations
+  const currentAnnotations = repoFiles && repoFiles[currentFileIndex]?.vulnerabilities 
+    ? repoFiles[currentFileIndex].vulnerabilities 
+    : [];
+
+  // Reset found issues when file changes
+  useEffect(() => {
+    setFoundIssues([]);
+  }, [currentFileIndex]);
 
   // Effect to log functions when a new file starts scanning
   useEffect(() => {
@@ -93,6 +60,10 @@ export default function ScannerDemo({
       if (file.functions && file.functions.length > 0) {
         newLogs.push(`Suspicious functions: ${file.functions.join(", ")}`);
       }
+
+      if (file.vulnerabilities && file.vulnerabilities.length > 0) {
+        newLogs.push(`Found ${file.vulnerabilities.length} potential issues during static analysis.`);
+      }
       
       newLogs.forEach(msg => {
          setLogs(prev => [...prev, `[${new Date().toLocaleTimeString().split(' ')[0]}] ${msg}`]);
@@ -106,28 +77,26 @@ export default function ScannerDemo({
 
   const handleScanLine = (lineIndex: number) => {
     // Check if the current line (lineIndex + 1) has an annotation
-    const found = annotations.find(a => a.line === lineIndex + 1);
+    const found = currentAnnotations?.find(a => a.line === lineIndex + 1);
     if (found && found.label) {
       setFoundIssues(prev => {
         if (prev.find(p => p.line === found.line)) return prev;
+        
+        // Add log for the found issue
+        setLogs(prevLogs => [...prevLogs, `[${new Date().toLocaleTimeString().split(' ')[0]}] ALERT: ${found.label} detected at line ${found.line}`]);
+        
         return [...prev, found];
       });
     }
 
-    // Check for logs
+    // Check for hardcoded logs (if any)
     const log = scanLogs.find(l => l.line === lineIndex);
     if (log) {
       setLogs(prev => [...prev, `[${new Date().toLocaleTimeString().split(' ')[0]}] ${log.message}`]);
     }
   };
 
-  const demoFiles = [
-    { name: "auth.ts", status: "completed" },
-    { name: "user.ts", status: "scanning" },
-    { name: "database.ts", status: "pending" },
-    { name: "api.ts", status: "pending" },
-    { name: "config.ts", status: "pending" },
-  ];
+  const demoFiles: { name: string; status: string }[] = [];
 
   // Use repoFiles if available, otherwise fallback to demoFiles
   const displayFiles = repoFiles 
@@ -137,7 +106,7 @@ export default function ScannerDemo({
       }))
     : demoFiles;
 
-  const currentFileName = repoFiles ? repoFiles[currentFileIndex]?.name : "user.ts";
+  const currentFileName = repoFiles ? repoFiles[currentFileIndex]?.name : "";
 
   return (
     <main className="flex h-screen w-full bg-[#0d1117] text-white overflow-hidden">
@@ -185,6 +154,12 @@ export default function ScannerDemo({
               <Activity className="h-3 w-3" />
               <span>Scanning</span>
             </div>
+            {wsConnected && (
+              <div className="flex items-center gap-1.5 rounded-full bg-green-500/10 px-2.5 py-1 text-xs text-green-400">
+                <div className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse" />
+                <span>Live</span>
+              </div>
+            )}
             <div className="flex items-center gap-1.5 rounded-full bg-gray-800 px-2.5 py-1 text-xs text-gray-400">
               <Cpu className="h-3 w-3" />
               <span>TS-Engine</span>
@@ -194,12 +169,12 @@ export default function ScannerDemo({
 
         {/* Code Area */}
         <div className="flex-1 overflow-hidden p-8 flex items-center justify-center bg-[#0d1117]/50">
-          <div className="w-full max-w-4xl max-h-full overflow-y-auto">
+          <div className="w-full max-w-4xl h-full overflow-hidden">
             <CodeScanner 
               code={initialCode || ""} 
               language="typescript" 
-              className="shadow-2xl ring-1 ring-white/5 bg-[#0d1117] backdrop-blur-sm"
-              annotations={annotations}
+              className="shadow-2xl ring-1 ring-white/5 bg-[#0d1117] backdrop-blur-sm h-full"
+              annotations={currentAnnotations || []}
               onScanLine={handleScanLine}
               onScanComplete={onScanComplete}
             />

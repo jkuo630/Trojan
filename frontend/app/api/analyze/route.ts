@@ -111,7 +111,7 @@ export async function POST(req: NextRequest) {
       .filter((f: any) => {
         const path = f.path.toLowerCase();
         // Exclude common non-code / binary / config extensions
-        const excludeExts = /\.(png|jpg|jpeg|gif|svg|ico|pdf|zip|tar|gz|json|lock|md|txt|xml|yaml|yml|css|scss|less|html|map|ttf|woff|woff2|eot|mp4|webm|mp3)$/;
+        const excludeExts = /\.(png|jpg|jpeg|gif|svg|ico|pdf|zip|tar|gz|json|lock|md|txt|xml|yaml|yml|css|scss|less|html|map|ttf|woff|woff2|eot|mp4|webm|mp3|ds_store)$/;
         
         // Exclude common generated/config directories
         const excludeDirs = /(node_modules|dist|build|coverage|\.git|\.next|\.vercel|public|assets|vendor|libs)/;
