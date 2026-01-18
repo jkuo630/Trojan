@@ -1,11 +1,58 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import type React from "react";
 import { CodeScanner, type CodeAnnotation } from "@/components/CodeScanner";
-import { FileCode, ShieldAlert, CheckCircle, AlertTriangle, FileText, ChevronRight, Terminal, Cpu, Activity } from "lucide-react";
+import { FileCode, ShieldAlert, CheckCircle, AlertTriangle, FileText, ChevronRight, Terminal, Cpu, Activity, Key, Lock, Database, DatabaseZap, Code as CodeIcon, Shell, EyeOff, KeyRound } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 const scanLogs: { line: number; message: string }[] = [];
+
+// Map vulnerability types to icons based on agent/specialist type
+function getVulnerabilityIcon(vulnType: string, vulnerabilityType?: string): React.ReactElement {
+  const typeLower = (vulnType || "").toLowerCase();
+  const vulnTypeLower = (vulnerabilityType || "").toLowerCase();
+  
+  // Check if it's an injection vulnerability (from backend event type or vuln type)
+  if (vulnTypeLower === "injection_vulnerability" || typeLower.includes("sql injection") || 
+      typeLower.includes("nosql injection") || typeLower.includes("command injection") ||
+      typeLower.includes("code injection") || typeLower.includes("ldap injection") ||
+      typeLower.includes("template injection") || typeLower.includes("xpath injection")) {
+    if (typeLower.includes("sql")) {
+      return <DatabaseZap className="h-4 w-4" />;
+    } else if (typeLower.includes("command") || typeLower.includes("shell")) {
+      return <Shell className="h-4 w-4" />;
+    } else if (typeLower.includes("code")) {
+      return <CodeIcon className="h-4 w-4" />;
+    }
+    return <Database className="h-4 w-4" />;
+  }
+  
+  // Check if it's a sensitive data vulnerability
+  if (vulnTypeLower === "sensitive_data_vulnerability" || typeLower.includes("hardcoded") ||
+      typeLower.includes("api key") || typeLower.includes("password") || 
+      typeLower.includes("secret") || typeLower.includes("credential") ||
+      typeLower.includes("token") || typeLower.includes("exposed") ||
+      typeLower.includes("plaintext") || typeLower.includes("pii")) {
+    if (typeLower.includes("key") || typeLower.includes("credential")) {
+      return <Key className="h-4 w-4" />;
+    } else if (typeLower.includes("password")) {
+      return <Lock className="h-4 w-4" />;
+    }
+    return <EyeOff className="h-4 w-4" />;
+  }
+  
+  // Check if it's an authentication vulnerability
+  if (vulnTypeLower === "auth_vulnerability" || typeLower.includes("auth") ||
+      typeLower.includes("password policy") || typeLower.includes("session") ||
+      typeLower.includes("jwt") || typeLower.includes("oauth") ||
+      typeLower.includes("authentication")) {
+    return <KeyRound className="h-4 w-4" />;
+  }
+  
+  // Default to ShieldAlert for unknown types
+  return <ShieldAlert className="h-4 w-4" />;
+}
 
 interface ScannerDemoProps {
   initialCode?: string | null;
@@ -293,7 +340,7 @@ export default function ScannerDemo({
                         ? "bg-yellow-500/20 text-yellow-400"
                         : "bg-orange-500/20 text-orange-400"
                     }`}>
-                      {isHigh ? <ShieldAlert className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}
+                      {getVulnerabilityIcon(vuln.type || "", vuln._vulnerabilityType)}
                     </div>
                     <div className="flex-1 min-w-0">
                       <h3 className={`text-sm font-medium ${
