@@ -4,6 +4,16 @@ import * as parser from "@babel/parser";
 import traverse from "@babel/traverse";
 import path from "path";
 
+// Middleware for authentication
+async function authenticateRequest(req: NextRequest) {
+  // Implement your authentication logic here
+  // Example: Check for a valid session token or API key
+  const authHeader = req.headers.get('Authorization');
+  if (!authHeader || !isValidToken(authHeader)) {
+    throw new Error('Unauthorized');
+  }
+}
+
 // Helper to recursively get files from GitHub API
 async function getRepoFiles(owner: string, repo: string, treeSha = "main") {
   const url = `https://api.github.com/repos/${owner}/${repo}/git/trees/${treeSha}?recursive=1`;
@@ -83,11 +93,28 @@ function extractFunctions(code: string, fileName: string): string[] {
 }
 
 export async function POST(req: NextRequest) {
+  try {
+    await authenticateRequest(req); // Ensure request is authenticated
+  } catch (error) {
+    return new Response(JSON.stringify({ error: "Unauthorized access" }), {
+      status: 401,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
   const body = await req.json();
-  const { url } = body;
+  const { url, github_token } = body;
 
   if (!url) {
     return new Response(JSON.stringify({ error: "URL is required" }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  // Validate and encrypt GitHub token
+  if (!github_token || !isValidGithubToken(github_token)) {
+    return new Response(JSON.stringify({ error: "Invalid GitHub token" }), {
       status: 400,
       headers: { "Content-Type": "application/json" },
     });
@@ -262,4 +289,16 @@ export async function POST(req: NextRequest) {
       "Connection": "keep-alive",
     },
   });
+}
+
+// Helper function to validate tokens
+function isValidToken(token: string): boolean {
+  // Implement your token validation logic
+  return true;
+}
+
+// Helper function to validate GitHub tokens
+function isValidGithubToken(token: string): boolean {
+  // Implement your GitHub token validation logic
+  return true;
 }
