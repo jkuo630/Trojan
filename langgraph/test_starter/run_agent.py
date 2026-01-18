@@ -31,9 +31,12 @@ def main():
         # Run the graph
         result = graph.invoke(inputs)
         
-        # Output results as JSON
-        suspicious_files = result.get("suspicious_files", [])
-        print(json.dumps(suspicious_files, indent=2))
+        # Output results as JSON (both suspicious_files and auth_vulnerabilities)
+        output = {
+            "suspicious_files": result.get("suspicious_files", []),
+            "auth_vulnerabilities": result.get("auth_vulnerabilities", [])
+        }
+        print(json.dumps(output, indent=2))
         
     except json.JSONDecodeError as e:
         error_msg = json.dumps({"error": f"Invalid JSON: {str(e)}"})
