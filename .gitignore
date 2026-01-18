@@ -31,5 +31,8 @@ yarn-error.log*
 
 # temp repos
 /tmp/trojan_repos
+<<<<<<< HEAD
 
 .cursor/debug
+=======
+>>>>>>> ec4775d74a727c9454d744f04358018aef183d7a
