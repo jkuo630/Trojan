@@ -26,6 +26,7 @@ class State(TypedDict):
     auth_vulnerabilities: List[Dict[str, Any]]  # Authentication vulnerabilities found
     injection_vulnerabilities: List[Dict[str, Any]]  # Injection vulnerabilities found
     sensitive_data_vulnerabilities: List[Dict[str, Any]]  # Sensitive data exposure vulnerabilities found
+    cryptographic_vulnerabilities: List[Dict[str, Any]]  # Cryptographic failure vulnerabilities found
 
 
 # Define the graph
@@ -33,7 +34,7 @@ graph = StateGraph(State)
 graph.add_node("identify_suspicious_files", identify_suspicious_files)
 graph.add_node("analyze_all_vulnerabilities_parallel", analyze_all_vulnerabilities_parallel)
 
-# Flow: START -> identify_suspicious_files -> analyze_all_vulnerabilities_parallel (runs auth, injection & sensitive_data in parallel) -> END
+# Flow: START -> identify_suspicious_files -> analyze_all_vulnerabilities_parallel (runs auth, injection, sensitive_data & cryptographic in parallel) -> END
 graph.add_edge(START, "identify_suspicious_files")
 graph.add_edge("identify_suspicious_files", "analyze_all_vulnerabilities_parallel")
 graph.add_edge("analyze_all_vulnerabilities_parallel", END)
