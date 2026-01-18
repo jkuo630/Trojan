@@ -1,8 +1,12 @@
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 
-const supabaseUrl = "https://jmdmrlzfnjjbgyvxciix.supabase.co";
-const supabaseAnonKey = "sb_publishable_QuGS5we_2BOSRKZ8_69CzA_DJ5yIU-8";
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+
+if (!supabaseUrl || !supabaseAnonKey) {
+  throw new Error("Missing Supabase environment variables. Please check your .env file.");
+}
 
 export function createServerClient() {
   const cookieStore = cookies();
