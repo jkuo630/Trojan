@@ -34,6 +34,26 @@ export default function LoginPage() {
     }
   };
 
+  const handleGitHubLogin = async () => {
+    setLoading(true);
+    setError("");
+
+    try {
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: "github",
+        options: {
+          redirectTo: `${window.location.origin}/auth/callback`,
+          scopes: "repo read:user", // Request repo access for GitHub API
+        },
+      });
+
+      if (error) throw error;
+    } catch (err: any) {
+      setError(err.message || "Failed to login with GitHub");
+      setLoading(false);
+    }
+  };
+
   return (
     <main className="flex min-h-screen flex-col items-center justify-center bg-[#0d1117] text-white">
       <div className="w-full max-w-md px-4">
@@ -92,6 +112,24 @@ export default function LoginPage() {
             {loading ? "Signing in..." : "Sign In"}
           </button>
         </form>
+
+        <div className="relative my-6">
+          <div className="absolute inset-0 flex items-center">
+            <div className="w-full border-t border-gray-700"></div>
+          </div>
+          <div className="relative flex justify-center text-sm">
+            <span className="px-2 bg-[#0d1117] text-gray-500">Or continue with</span>
+          </div>
+        </div>
+
+        <button
+          onClick={handleGitHubLogin}
+          disabled={loading}
+          className="w-full bg-[#24292e] hover:bg-[#2f363d] text-white px-6 py-3 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+        >
+          <Github className="h-5 w-5" />
+          {loading ? "Connecting..." : "Sign in with GitHub"}
+        </button>
 
         <p className="text-center text-gray-500 mt-6">
           Don't have an account?{" "}

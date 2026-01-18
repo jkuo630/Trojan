@@ -33,22 +33,33 @@ export default function ProjectDetailPage() {
   }[]>([]);
   const [currentFileIndex, setCurrentFileIndex] = useState(0);
   const [currentCode, setCurrentCode] = useState<string | null>(null);
+  const [repository, setRepository] = useState<string>("");
+  const [suspiciousFiles, setSuspiciousFiles] = useState<any[]>([]);
+  const [authVulnerabilities, setAuthVulnerabilities] = useState<any[]>([]);
 
   useEffect(() => {
+    console.log("useEffect triggered - checking auth...");
     // Check auth
     supabase.auth.getUser().then(({ data, error }) => {
       if (error || !data.user) {
+        console.log("Auth failed - redirecting to login");
         router.push("/auth/login");
         return;
       }
+      console.log("Auth successful - calling loadProject()");
       loadProject();
     });
   }, [projectId, router]);
 
   const loadProject = async () => {
+    console.log("loadProject() called");
     try {
       const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
+      console.log("Got user:", user?.id);
+      if (!user) {
+        console.log("No user found - returning early");
+        return;
+      }
 
       const { data, error } = await supabase
         .from("projects")
@@ -57,16 +68,33 @@ export default function ProjectDetailPage() {
         .eq("user_id", user.id)
         .single();
 
-      if (error) throw error;
+      console.log("Supabase query result:", { hasData: !!data, hasError: !!error });
+      
+      if (error) {
+        console.log("Supabase error:", error);
+        throw error;
+      }
       if (!data) {
+        console.log("No project data - redirecting");
         router.push("/projects");
         return;
       }
 
+      console.log("Project data loaded successfully");
       setProject(data);
 
-      // Map suspicious files for visualization
+      // Get repository from localStorage
+      const storedRepo = localStorage.getItem('current_repository');
+      if (storedRepo) {
+        setRepository(storedRepo);
+      }
+      console.log(`Repository: ${storedRepo}`);
+
+      // Store suspicious files data for fix workflow
       if (data.suspicious_files && Array.isArray(data.suspicious_files)) {
+        setSuspiciousFiles(data.suspicious_files);
+        
+        // Map suspicious files for visualization
         const files = data.suspicious_files.map((f: any) => ({
           name: f.file_path?.split("/").pop() || "Unknown",
           path: f.file_path || "",
@@ -75,6 +103,11 @@ export default function ProjectDetailPage() {
           reason: f.reason || "",
         }));
         setRepoFiles(files);
+      }
+
+      // Load auth vulnerabilities if available
+      if (data.auth_vulnerabilities && Array.isArray(data.auth_vulnerabilities)) {
+        setAuthVulnerabilities(data.auth_vulnerabilities);
       }
     } catch (error) {
       console.error("Error loading project:", error);
@@ -162,6 +195,9 @@ export default function ProjectDetailPage() {
           currentFileIndex={currentFileIndex}
           onFileSelect={setCurrentFileIndex}
           onScanComplete={handleScanComplete}
+          repository={repository}
+          suspiciousFiles={suspiciousFiles}
+          authVulnerabilities={authVulnerabilities}
         />
       </div>
     </main>

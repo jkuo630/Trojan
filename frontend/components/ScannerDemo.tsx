@@ -1,11 +1,69 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import type React from "react";
 import { CodeScanner, type CodeAnnotation } from "@/components/CodeScanner";
-import { FileCode, ShieldAlert, CheckCircle, AlertTriangle, FileText, ChevronRight, Terminal, Cpu, Activity } from "lucide-react";
+import { FileCode, ShieldAlert, CheckCircle, AlertTriangle, FileText, ChevronRight, Terminal, Cpu, Activity, Key, Lock, Database, DatabaseZap, Code as CodeIcon, Shell, EyeOff, KeyRound, LockKeyhole } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+import { submitFixToBackend, type FileAnalysisData } from "@/types/security-fix";
 
 const scanLogs: { line: number; message: string }[] = [];
+
+// Map vulnerability types to icons based on agent/specialist type
+function getVulnerabilityIcon(vulnType: string, vulnerabilityType?: string): React.ReactElement {
+  const typeLower = (vulnType || "").toLowerCase();
+  const vulnTypeLower = (vulnerabilityType || "").toLowerCase();
+  
+  // Check if it's an injection vulnerability (from backend event type or vuln type)
+  if (vulnTypeLower === "injection_vulnerability" || typeLower.includes("sql injection") || 
+      typeLower.includes("nosql injection") || typeLower.includes("command injection") ||
+      typeLower.includes("code injection") || typeLower.includes("ldap injection") ||
+      typeLower.includes("template injection") || typeLower.includes("xpath injection")) {
+    if (typeLower.includes("sql")) {
+      return <DatabaseZap className="h-4 w-4" />;
+    } else if (typeLower.includes("command") || typeLower.includes("shell")) {
+      return <Shell className="h-4 w-4" />;
+    } else if (typeLower.includes("code")) {
+      return <CodeIcon className="h-4 w-4" />;
+    }
+    return <Database className="h-4 w-4" />;
+  }
+  
+  // Check if it's a sensitive data vulnerability
+  if (vulnTypeLower === "sensitive_data_vulnerability" || typeLower.includes("hardcoded") ||
+      typeLower.includes("api key") || typeLower.includes("password") || 
+      typeLower.includes("secret") || typeLower.includes("credential") ||
+      typeLower.includes("token") || typeLower.includes("exposed") ||
+      typeLower.includes("plaintext") || typeLower.includes("pii")) {
+    if (typeLower.includes("key") || typeLower.includes("credential")) {
+      return <Key className="h-4 w-4" />;
+    } else if (typeLower.includes("password")) {
+      return <Lock className="h-4 w-4" />;
+    }
+    return <EyeOff className="h-4 w-4" />;
+  }
+  
+  // Check if it's an authentication vulnerability
+  if (vulnTypeLower === "auth_vulnerability" || typeLower.includes("auth") ||
+      typeLower.includes("password policy") || typeLower.includes("session") ||
+      typeLower.includes("jwt") || typeLower.includes("oauth") ||
+      typeLower.includes("authentication")) {
+    return <KeyRound className="h-4 w-4" />;
+  }
+  
+  // Check if it's a cryptographic vulnerability
+  if (vulnTypeLower === "cryptographic_vulnerability" || typeLower.includes("cryptographic") ||
+      typeLower.includes("crypto") || typeLower.includes("hash") ||
+      typeLower.includes("encryption") || typeLower.includes("ssl") ||
+      typeLower.includes("tls") || typeLower.includes("certificate") ||
+      typeLower.includes("md5") || typeLower.includes("sha1") ||
+      typeLower.includes("weak key") || typeLower.includes("entropy")) {
+    return <LockKeyhole className="h-4 w-4" />;
+  }
+  
+  // Default to ShieldAlert for unknown types
+  return <ShieldAlert className="h-4 w-4" />;
+}
 
 interface ScannerDemoProps {
   initialCode?: string | null;
@@ -22,6 +80,8 @@ interface ScannerDemoProps {
   wsConnected?: boolean;
   authVulnerabilities?: any[]; // Auth vulnerabilities from the agent
   completedFiles?: Set<number>; // Set of completed file indices
+  repository?: string; // e.g., "owner/repo"
+  suspiciousFiles?: any[]; // Full suspicious files data with risk_level, etc.
 }
 
 export default function ScannerDemo({ 
@@ -33,11 +93,15 @@ export default function ScannerDemo({
   onScanComplete,
   wsConnected = false,
   authVulnerabilities = [],
-  completedFiles = new Set()
+  completedFiles = new Set(),
+  repository,
+  suspiciousFiles = []
 }: ScannerDemoProps) {
   const [foundIssues, setFoundIssues] = useState<CodeAnnotation[]>([]);
   const [logs, setLogs] = useState<string[]>([]);
   const logsEndRef = useRef<HTMLDivElement>(null);
+  const [fixingVulnerability, setFixingVulnerability] = useState<number | null>(null);
+  const [fixResults, setFixResults] = useState<Map<number, { success: boolean; message: string; pr_url?: string }>>(new Map());
 
   // Get current file annotations from repoFiles
   const fileAnnotations = repoFiles && repoFiles[currentFileIndex]?.vulnerabilities 
@@ -157,6 +221,113 @@ export default function ScannerDemo({
 
   const currentFileName = repoFiles ? repoFiles[currentFileIndex]?.name : "";
 
+  // Handler to fix a specific vulnerability
+  const handleFixVulnerability = async (vulnerabilityIndex: number, vulnerability: any) => {
+    if (!repository) {
+      const newResults = new Map(fixResults);
+      newResults.set(vulnerabilityIndex, { success: false, message: "Repository information not available" });
+      setFixResults(newResults);
+      return;
+    }
+
+    // Get GitHub token from localStorage
+    const githubToken = localStorage.getItem("github_token");
+    if (!githubToken) {
+      const newResults = new Map(fixResults);
+      newResults.set(vulnerabilityIndex, { success: false, message: "GitHub token not found. Please log in again." });
+      setFixResults(newResults);
+      return;
+    }
+
+    // Get current file data
+    const currentFile = repoFiles?.[currentFileIndex];
+    const suspiciousFile = suspiciousFiles?.[currentFileIndex];
+    
+    if (!currentFile || !suspiciousFile) {
+      const newResults = new Map(fixResults);
+      newResults.set(vulnerabilityIndex, { success: false, message: "File data not available" });
+      setFixResults(newResults);
+      return;
+    }
+
+    // Build single vulnerability array for this specific issue
+    const singleVulnerability = {
+      line: vulnerability.line,
+      type: vulnerability.type || "Unknown vulnerability",
+      severity: vulnerability.severity || "medium",
+      description: vulnerability.description || "",
+      location: vulnerability.location || currentFile.path,
+    };
+
+    // Build FileAnalysisData with only this vulnerability
+    const fileAnalysisData: FileAnalysisData = {
+      file_index: currentFileIndex,
+      file_path: currentFile.path,
+      file_name: currentFile.name,
+      risk_level: suspiciousFile.risk_level || "medium",
+      suspicious_functions: suspiciousFile.suspicious_functions || currentFile.functions || [],
+      vulnerabilities: [singleVulnerability],
+    };
+
+    setFixingVulnerability(vulnerabilityIndex);
+    
+    // Clear previous result for this vulnerability
+    const newResults = new Map(fixResults);
+    newResults.delete(vulnerabilityIndex);
+    setFixResults(newResults);
+
+    try {
+      setLogs(prev => [
+        ...prev,
+        `[${new Date().toLocaleTimeString().split(' ')[0]}] 🔧 Starting fix for: ${vulnerability.type}`,
+      ]);
+
+      const result = await submitFixToBackend(fileAnalysisData, repository, githubToken);
+      
+      if (result.success) {
+        const resultData = {
+          success: true,
+          message: `Fixed successfully!`,
+          pr_url: result.pr_url,
+        };
+        newResults.set(vulnerabilityIndex, resultData);
+        setFixResults(new Map(newResults));
+        
+        setLogs(prev => [
+          ...prev,
+          `[${new Date().toLocaleTimeString().split(' ')[0]}] ✅ Fix completed: ${vulnerability.type}`,
+          `[${new Date().toLocaleTimeString().split(' ')[0]}] 🔗 Pull Request: ${result.pr_url}`,
+        ]);
+      } else {
+        const resultData = {
+          success: false,
+          message: `${result.error || "Unknown error"}`,
+        };
+        newResults.set(vulnerabilityIndex, resultData);
+        setFixResults(new Map(newResults));
+        
+        setLogs(prev => [
+          ...prev,
+          `[${new Date().toLocaleTimeString().split(' ')[0]}] ❌ Fix failed: ${result.error}`,
+        ]);
+      }
+    } catch (error: any) {
+      const resultData = {
+        success: false,
+        message: `${error.message || "Failed to submit fix request"}`,
+      };
+      newResults.set(vulnerabilityIndex, resultData);
+      setFixResults(new Map(newResults));
+      
+      setLogs(prev => [
+        ...prev,
+        `[${new Date().toLocaleTimeString().split(' ')[0]}] ❌ Error: ${error.message}`,
+      ]);
+    } finally {
+      setFixingVulnerability(null);
+    }
+  };
+
   return (
     <main className="flex h-screen w-full bg-[#0d1117] text-white overflow-hidden">
       {/* Left Sidebar - File Explorer */}
@@ -263,6 +434,7 @@ export default function ScannerDemo({
       {/* Right Sidebar - Vulnerabilities */}
       <div className="w-80 flex-shrink-0 border-l border-gray-800 bg-[#0d1117] p-4 flex flex-col overflow-hidden">
         <h2 className="mb-4 text-xs font-bold uppercase tracking-wider text-gray-500">Scan Results</h2>
+
         <div className="space-y-3 overflow-y-auto flex-1 scrollbar-hide">
           <AnimatePresence mode="popLayout">
             {/* Auth Vulnerabilities from Agent */}
@@ -270,6 +442,8 @@ export default function ScannerDemo({
               const severity = vuln.severity?.toLowerCase() || "medium";
               const isHigh = severity === "high" || severity === "critical";
               const isLow = severity === "low";
+              const fixResult = fixResults.get(i);
+              const isFixing = fixingVulnerability === i;
               
               return (
                 <motion.div
@@ -293,7 +467,7 @@ export default function ScannerDemo({
                         ? "bg-yellow-500/20 text-yellow-400"
                         : "bg-orange-500/20 text-orange-400"
                     }`}>
-                      {isHigh ? <ShieldAlert className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}
+                      {getVulnerabilityIcon(vuln.type || "", vuln._vulnerabilityType)}
                     </div>
                     <div className="flex-1 min-w-0">
                       <h3 className={`text-sm font-medium ${
@@ -309,6 +483,46 @@ export default function ScannerDemo({
                         {vuln.line && ` • Line ${vuln.line}`}
                         {vuln.severity && ` • ${vuln.severity.toUpperCase()}`}
                       </p>
+                      
+                      {/* Fix Button */}
+                      {repository && (
+                        <div className="mt-2">
+                          <button
+                            onClick={() => handleFixVulnerability(i, vuln)}
+                            disabled={isFixing}
+                            className="flex items-center gap-1.5 rounded bg-blue-600 hover:bg-blue-500 px-2 py-1 text-xs font-medium text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            <Wrench className="h-3 w-3" />
+                            {isFixing ? "Fixing..." : "Fix This"}
+                          </button>
+                        </div>
+                      )}
+                      
+                      {/* Fix Result */}
+                      {fixResult && (
+                        <motion.div
+                          initial={{ opacity: 0, height: 0 }}
+                          animate={{ opacity: 1, height: "auto" }}
+                          className={`mt-2 rounded border p-2 text-xs ${
+                            fixResult.success
+                              ? "border-green-500/30 bg-green-500/10 text-green-200"
+                              : "border-red-500/30 bg-red-500/10 text-red-200"
+                          }`}
+                        >
+                          <p className="font-medium">{fixResult.message}</p>
+                          {fixResult.pr_url && (
+                            <a
+                              href={fixResult.pr_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="mt-1 flex items-center gap-1 text-blue-400 hover:text-blue-300"
+                            >
+                              <ExternalLink className="h-3 w-3" />
+                              View PR
+                            </a>
+                          )}
+                        </motion.div>
+                      )}
                     </div>
                   </div>
                 </motion.div>
