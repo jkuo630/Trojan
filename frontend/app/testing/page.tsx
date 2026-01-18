@@ -1,9 +1,9 @@
-import { VulnerabilityCard } from "@/components/Vulnerability";
+import { VulnerabilityPopUp } from "@/components/VulnerabilityPopUp";
 
 export default function TestingPage() {
   return (
     <div>
-      <VulnerabilityCard
+      <VulnerabilityPopUp
         data={{
           title: "Missing Authentication Checks",
           message: "This endpoint does not verify user authentication before processing requests.",

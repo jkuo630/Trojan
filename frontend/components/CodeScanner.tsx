@@ -5,6 +5,7 @@ import { createHighlighter, type ThemedToken } from "shiki";
 import { motion, AnimatePresence } from "framer-motion";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
+import { VulnerabilityPopUp, type VulnerabilityCardData } from "@/components/VulnerabilityPopUp";
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -26,6 +27,8 @@ interface CodeScannerProps {
   onScanComplete?: () => void;
   onScanProgress?: (scannedLineIndex: number) => void; // Called when a line is scanned
   skipAnimation?: boolean; // If true, skip animation and show all lines as scanned
+  selectedLine?: number | null; // Line number (1-indexed) to show vulnerability popup for
+  selectedVulnerability?: VulnerabilityCardData | null; // Vulnerability data to display in popup
 }
 
 interface CodeLineProps {
@@ -114,6 +117,8 @@ export function CodeScanner({
   onScanComplete,
   onScanProgress,
   skipAnimation = false,
+  selectedLine = null,
+  selectedVulnerability = null,
 }: CodeScannerProps) {
   const [tokens, setTokens] = useState<ThemedToken[][]>([]);
   const [loading, setLoading] = useState(true);
@@ -128,6 +133,7 @@ export function CodeScanner({
   const onScanProgressRef = useRef(onScanProgress);
   const onScanCompleteRef = useRef(onScanComplete);
   const onScanStartRef = useRef(onScanStart);
+  const selectedLineRef = useRef<number | null>(null);
   
   // Update refs when callbacks change
   useEffect(() => {
@@ -185,6 +191,24 @@ export function CodeScanner({
     highlight();
   }, [code, language]);
 
+  // Scroll to selected line when it changes
+  useEffect(() => {
+    if (selectedLine !== null && selectedLine !== selectedLineRef.current && containerRef.current && tokens.length > 0) {
+      selectedLineRef.current = selectedLine;
+      const lineIndex = selectedLine - 1; // Convert to 0-indexed
+      if (lineIndex >= 0 && lineIndex < tokens.length) {
+        const lineElement = document.getElementById(`line-${lineIndex}`);
+        if (lineElement && containerRef.current) {
+          const containerRect = containerRef.current.getBoundingClientRect();
+          const lineRect = lineElement.getBoundingClientRect();
+          const relativeTop = lineRect.top - containerRect.top + containerRef.current.scrollTop;
+          const scrollTarget = relativeTop - (containerRef.current.clientHeight / 2) + (lineRect.height / 2);
+          containerRef.current.scrollTo({ top: scrollTarget, behavior: "smooth" });
+        }
+      }
+    }
+  }, [selectedLine, tokens.length]);
+
   // Scanning Logic
   useEffect(() => {
     // #region agent log
@@ -232,7 +256,7 @@ export function CodeScanner({
     let frameCount = 0; // Count frames to control speed
 
     const processFrame = () => {
-      const LINES_PER_FRAME = 3; // Lines per frame (fractional = slower)
+      const LINES_PER_FRAME = 4; // Lines per frame (fractional = slower)
       const FRAME_DELAY = Math.ceil(1 / LINES_PER_FRAME); // Process one step every N frames
       
       const container = containerRef.current;
@@ -428,6 +452,7 @@ export function CodeScanner({
             {tokens.map((line, lineIndex) => {
               const lineNum = lineIndex + 1;
               const annotation = annotations.find((a) => a.line === lineNum);
+              const showVulnerabilityPopup = selectedLine === lineNum && selectedVulnerability !== null;
 
               // State for this line
               const isScanned = lineIndex < activeLineIndex;
@@ -441,15 +466,28 @@ export function CodeScanner({
               // #endregion
 
               return (
-                <CodeLine
-                  key={lineIndex}
-                  line={line}
-                  lineIndex={lineIndex}
-                  isScanned={isScanned}
-                  isScanning={isScanning}
-                  isPending={isPending}
-                  annotation={annotation}
-                />
+                <React.Fragment key={lineIndex}>
+                  <CodeLine
+                    line={line}
+                    lineIndex={lineIndex}
+                    isScanned={isScanned}
+                    isScanning={isScanning}
+                    isPending={isPending}
+                    annotation={annotation}
+                  />
+                  {showVulnerabilityPopup && selectedVulnerability && (
+                    <tr>
+                      <td colSpan={2} className="px-0 py-0">
+                        <div className="px-4 pt-3 pb-2">
+                          <VulnerabilityPopUp
+                            data={selectedVulnerability}
+                            state="default"
+                          />
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
               );
             })}
           </tbody>

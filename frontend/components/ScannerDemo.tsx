@@ -6,6 +6,7 @@ import { FileCode, ShieldAlert, CheckCircle, AlertTriangle, FileText, ChevronRig
 import { motion, AnimatePresence } from "framer-motion";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { VulnerabilityPopUp, type VulnerabilityCardData } from "@/components/VulnerabilityPopUp";
 
 const scanLogs: { line: number; message: string }[] = [];
 
@@ -48,6 +49,7 @@ export default function ScannerDemo({
   const [severityFilter, setSeverityFilter] = useState<"all" | "low" | "medium" | "high">("all");
   const [vulnFilter, setVulnFilter] = useState<"all" | "low" | "medium" | "high">("all");
   const [scannedLineIndex, setScannedLineIndex] = useState(-1); // Track the highest scanned line
+  const [selectedVulnerability, setSelectedVulnerability] = useState<{ fileIndex: number; line: number } | null>(null); // Track selected vulnerability
   
   // Track when initialCode prop changes
   useEffect(() => {
@@ -131,6 +133,10 @@ export default function ScannerDemo({
   useEffect(() => {
     setFoundIssues([]);
     setScannedLineIndex(-1); // Always reset to -1, let animation progress naturally
+    // Clear selected vulnerability when file changes (unless it's the same file)
+    if (selectedVulnerability && selectedVulnerability.fileIndex !== currentFileIndex) {
+      setSelectedVulnerability(null);
+    }
   }, [currentFileIndex]);
 
   // Effect to log functions when a new file starts scanning
@@ -364,17 +370,45 @@ export default function ScannerDemo({
                 const isCompleted = file.status === "completed";
                 const isScanning = file.status === "scanning";
                 const vulnerabilitySeverity = isCompleted ? getFileVulnerabilitySeverity(i) : null;
+                const isDisabled = !isScanComplete;
                 
                 return (
                   <div
                     key={file.name + i}
-                    onClick={() => onFileSelect?.(i)}
-                    className={`flex items-center gap-1.5 rounded px-1.5 py-1 text-xs cursor-pointer transition-colors ${
+                    onClick={() => {
+                      if (!isDisabled) {
+                        // Find first vulnerability for this file before switching
+                        const fileVulns = authVulnerabilities.filter((vuln: any) => {
+                          const vulnPath = vuln.location || vuln.file_path || "";
+                          const filePath = repoFiles?.[i]?.path || "";
+                          const fileName = repoFiles?.[i]?.name || "";
+                          return vulnPath.includes(fileName) || vulnPath === filePath || 
+                                 (vuln.file_index !== undefined && vuln.file_index === i);
+                        });
+                        
+                        // Switch to the file
+                        onFileSelect?.(i);
+                        
+                        // Set selected vulnerability after a small delay to ensure file switch happens first
+                        setTimeout(() => {
+                          if (fileVulns.length > 0 && fileVulns[0].line !== null && fileVulns[0].line !== undefined) {
+                            setSelectedVulnerability({ fileIndex: i, line: fileVulns[0].line });
+                          } else {
+                            setSelectedVulnerability(null);
+                          }
+                        }, 100);
+                      }
+                    }}
+                    className={`flex items-center gap-1.5 rounded px-1.5 py-1 text-xs transition-colors ${
+                      isDisabled
+                        ? "cursor-not-allowed"
+                        : "cursor-pointer"
+                    } ${
                       isActive
                         ? "bg-[#344F67] bg-opacity-40 text-[#6699C9]"
                         : isCompleted
-                        ? "text-[#D6D6D6] text-opacity-60 hover:bg-white/5"
-                        : "text-[#D6D6D6] text-opacity-40 hover:bg-white/5"
+                        ? `text-[#D6D6D6] text-opacity-60 ${isDisabled ? "" : "hover:bg-white/5"}`
+                        : `text-[#D6D6D6] text-opacity-40 ${isDisabled ? "" : "hover:bg-white/5"}`
                     }`}
                   >
                     <img src="/file.svg" alt="file" className="h-3 w-3 flex-shrink-0" />
@@ -418,6 +452,29 @@ export default function ScannerDemo({
               onScanComplete={onScanComplete}
               onScanProgress={handleScanProgress}
               skipAnimation={completedFiles.has(currentFileIndex)}
+              selectedLine={selectedVulnerability && selectedVulnerability.fileIndex === currentFileIndex ? selectedVulnerability.line : null}
+              selectedVulnerability={selectedVulnerability && selectedVulnerability.fileIndex === currentFileIndex ? (() => {
+                // Find the vulnerability data for the selected line
+                const vuln = authVulnerabilities.find((v: any) => {
+                  const vulnPath = v.location || v.file_path || "";
+                  const filePath = currentFilePath || repoFiles?.[currentFileIndex]?.path || "";
+                  const fileName = filePath.split("/").pop() || repoFiles?.[currentFileIndex]?.name || "";
+                  const matchesFile = vulnPath.includes(fileName) || vulnPath === filePath || 
+                                     (v.file_index !== undefined && v.file_index === currentFileIndex);
+                  return matchesFile && v.line === selectedVulnerability.line;
+                });
+                if (vuln) {
+                  const severity = (vuln.severity?.toLowerCase() || "medium") as "low" | "medium" | "high";
+                  return {
+                    title: vuln.type || "Authentication Vulnerability",
+                    message: vuln.description || "No description available",
+                    severity: severity,
+                    filePath: vuln.location || vuln.file_path || filePath,
+                    line: vuln.line as number,
+                  };
+                }
+                return null;
+              })() : null}
             />
           </div>
         </div>
@@ -470,7 +527,37 @@ export default function ScannerDemo({
                       initial={{ opacity: 0, y: -10 }}
                       animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0, scale: 0.95 }}
-                      className="border border-[#D1D1D1] bg-[#0E141A] p-3"
+                      className="border border-[#D1D1D1] bg-[#0E141A] p-3 cursor-pointer hover:border-[#6699C9] transition-colors"
+                      onClick={() => {
+                        // Determine which file this vulnerability belongs to
+                        const vulnPath = vuln.location || vuln.file_path || "";
+                        const currentFilePathForMatch = currentFilePath || repoFiles?.[currentFileIndex]?.path || "";
+                        const fileName = currentFilePathForMatch.split("/").pop() || repoFiles?.[currentFileIndex]?.name || "";
+                        const isCurrentFile = vulnPath.includes(fileName) || vulnPath === currentFilePathForMatch || 
+                                             (vuln.file_index !== undefined && vuln.file_index === currentFileIndex);
+                        
+                        if (isCurrentFile && vuln.line !== null && vuln.line !== undefined) {
+                          // Same file, just navigate to line
+                          setSelectedVulnerability({ fileIndex: currentFileIndex, line: vuln.line });
+                        } else if (vuln.file_index !== undefined && repoFiles?.[vuln.file_index]) {
+                          // Different file, switch to it and navigate to line
+                          onFileSelect?.(vuln.file_index);
+                          if (vuln.line !== null && vuln.line !== undefined) {
+                            setSelectedVulnerability({ fileIndex: vuln.file_index, line: vuln.line });
+                          }
+                        } else {
+                          // Try to find file by path
+                          const fileIndex = repoFiles?.findIndex(f => {
+                            const filePath = f.path || "";
+                            const fileName = f.name || "";
+                            return vulnPath.includes(fileName) || vulnPath === filePath;
+                          });
+                          if (fileIndex !== undefined && fileIndex >= 0 && vuln.line !== null && vuln.line !== undefined) {
+                            onFileSelect?.(fileIndex);
+                            setSelectedVulnerability({ fileIndex, line: vuln.line });
+                          }
+                        }
+                      }}
                     >
                       <h3 className="text-[11px] font-medium text-white mb-2">
                         {vuln.type || "Authentication Vulnerability"}
