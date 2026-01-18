@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import type React from "react";
 import { CodeScanner, type CodeAnnotation } from "@/components/CodeScanner";
-import { FileCode, ShieldAlert, CheckCircle, AlertTriangle, FileText, ChevronRight, Terminal, Cpu, Activity, Key, Lock, Database, DatabaseZap, Code as CodeIcon, Shell, EyeOff, KeyRound, LockKeyhole } from "lucide-react";
+import { FileCode, ShieldAlert, CheckCircle, AlertTriangle, FileText, ChevronRight, Terminal, Cpu, Activity, Key, Lock, Database, DatabaseZap, Code as CodeIcon, Shell, EyeOff, KeyRound, LockKeyhole, Wrench, ExternalLink } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { submitFixToBackend, type FileAnalysisData } from "@/types/security-fix";
 
