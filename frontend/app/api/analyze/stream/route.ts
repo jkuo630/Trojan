@@ -82,12 +82,40 @@ function extractFunctions(code: string, fileName: string): string[] {
   return functions;
 }
 
+// Middleware to check authentication
+async function authenticate(req: NextRequest) {
+  const authHeader = req.headers.get('Authorization');
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return false;
+  }
+  const token = authHeader.substring(7);
+  // Validate token logic here (e.g., JWT verification)
+  // For example purposes, assume a function validateToken exists
+  return validateToken(token);
+}
+
 export async function POST(req: NextRequest) {
+  // Check authentication
+  if (!(await authenticate(req))) {
+    return new Response(JSON.stringify({ error: "Unauthorized" }), {
+      status: 401,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
   const body = await req.json();
-  const { url } = body;
+  const { url, github_token } = body;
 
   if (!url) {
     return new Response(JSON.stringify({ error: "URL is required" }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  // Validate GitHub token
+  if (!github_token || !/^[a-zA-Z0-9_]+$/.test(github_token)) {
+    return new Response(JSON.stringify({ error: "Invalid GitHub token" }), {
       status: 400,
       headers: { "Content-Type": "application/json" },
     });
