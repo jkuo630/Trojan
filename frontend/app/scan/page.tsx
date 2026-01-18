@@ -28,13 +28,23 @@ function ScanContent() {
   const [completedFiles, setCompletedFiles] = useState<Set<number>>(new Set());
   const [isScanningAnimation, setIsScanningAnimation] = useState(false); // Track if animation is in progress
   const [pendingFileChange, setPendingFileChange] = useState<{fileIndex: number, eventData: any} | null>(null); // Queue next file change
+  const [repository, setRepository] = useState<string>("");
+  const [suspiciousFiles, setSuspiciousFiles] = useState<any[]>([]);
 
   useEffect(() => {
     if (!repoUrl) return;
 
     const startScan = async () => {
       // Only use API for full repos, fallback to direct fetch for single files if needed
-      if (repoUrl.match(/github\.com\/([^/]+)\/([^/]+)$/)) {
+      const match = repoUrl.match(/github\.com\/([^/]+)\/([^/]+)/);
+      if (match) {
+        // Save repository to localStorage for later use
+        const [_, owner, repo] = match;
+        const cleanRepo = repo.replace(/\.git$/, ''); // Remove .git suffix if present
+        const repoName = `${owner}/${cleanRepo}`;
+        localStorage.setItem('current_repository', repoName);
+        setRepository(repoName); // Set repository state for ScannerDemo
+        console.log(`Scanning repository: ${repoName}`);
         setIsLoading(true);
         setScanStatus("Scanning repository structure...");
         setRepoFiles([]); // Clear any previous files
@@ -157,6 +167,7 @@ function ScanContent() {
 
                 case "suspicious_files":
                   if (Array.isArray(eventData) && eventData.length > 0) {
+                    setSuspiciousFiles(eventData); // Store full suspicious files data
                     const mappedFiles = eventData.map((f: any) => ({
                       name: f.file_path?.split("/").pop() || "Unknown",
                       path: f.file_path || "",
@@ -347,6 +358,8 @@ function ScanContent() {
             onScanComplete={handleScanComplete}
             authVulnerabilities={authVulnerabilities}
             completedFiles={completedFiles}
+            repository={repository}
+            suspiciousFiles={suspiciousFiles}
           />
         ) : (
           <div className="flex items-center justify-center h-full bg-[#0d1117]">
