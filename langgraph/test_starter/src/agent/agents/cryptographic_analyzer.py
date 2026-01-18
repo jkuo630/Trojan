@@ -46,9 +46,9 @@ Focus on finding:
 
 IMPORTANT: You MUST provide the exact line number for each vulnerability found. Analyze the code content carefully and identify the specific line where the cryptographic vulnerability exists.
 
-Return JSON array of vulnerabilities found. Each entry MUST include: line (integer line number, not null), type (string - e.g., "Weak Hash Algorithm", "Insecure SSL/TLS"), severity (high/medium/low), description (string - detailed explanation up to 4 sentences), location (file path).
+Return JSON array of vulnerabilities found. Each entry MUST include: line (integer line number, not null), type (string - e.g., "Weak Hash Algorithm", "Insecure SSL/TLS"), severity (high/medium/low), description (string - detailed explanation up to 3 sentences), location (file path).
 
-DESCRIPTION REQUIREMENTS: The description field must be detailed and informative, explaining what the vulnerability is, why it's a security risk, what the potential impact could be, and ideally how it should be fixed. Use up to 4 sentences to provide comprehensive context."""
+DESCRIPTION REQUIREMENTS: The description field must be detailed and informative, explaining what the vulnerability is, why it's a security risk, and what the potential impact could be. Do NOT suggest specific code fixes - only describe the security issue and its risks. Use up to 3 sentences to provide comprehensive context."""
 
     if file_content:
         user_prompt = f"""Analyze this file for cryptographic failure vulnerabilities:
@@ -69,12 +69,12 @@ Example format:
     "line": 42,
     "type": "Weak Hash Algorithm",
     "severity": "high",
-    "description": "MD5 hash function used at line 42, which is cryptographically broken and should not be used for security purposes. MD5 is vulnerable to collision attacks and has been deprecated by security standards, making it unsuitable for password hashing, data integrity verification, or digital signatures. An attacker could exploit this weakness to create hash collisions, potentially bypassing authentication mechanisms or tampering with data without detection. The code should migrate to secure hash functions like bcrypt, Argon2, or SHA-256/SHA-3, depending on the specific use case.",
+    "description": "MD5 hash function used at line 42, which is cryptographically broken and should not be used for security purposes. MD5 is vulnerable to collision attacks and has been deprecated by security standards, making it unsuitable for password hashing, data integrity verification, or digital signatures. An attacker could exploit this weakness to create hash collisions, potentially bypassing authentication mechanisms or tampering with data without detection.",
     "location": "{file_path}"
   }}
 ]
 
-If no vulnerabilities found, return empty array []. Be specific about what cryptographic issues you identify and ALWAYS include the line number. Provide detailed descriptions (up to 4 sentences) explaining the vulnerability, its risks, potential impact, and remediation."""
+If no vulnerabilities found, return empty array []. Be specific about what cryptographic issues you identify and ALWAYS include the line number. Provide detailed descriptions (up to 3 sentences) explaining the vulnerability and its security risks."""
     else:
         user_prompt = f"""Analyze this file for cryptographic failure vulnerabilities:
 
@@ -97,7 +97,7 @@ Example format:
   }}
 ]
 
-If no vulnerabilities found, return empty array []. Be specific about what cryptographic issues you identify. Provide detailed descriptions (up to 4 sentences) explaining the vulnerability, its risks, potential impact, and remediation."""
+If no vulnerabilities found, return empty array []. Be specific about what cryptographic issues you identify. Provide detailed descriptions (up to 3 sentences) explaining the vulnerability and its security risks."""
 
     messages = [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
     response = model.invoke(messages)

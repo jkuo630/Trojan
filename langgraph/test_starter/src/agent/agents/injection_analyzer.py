@@ -44,9 +44,9 @@ Focus on finding:
 
 IMPORTANT: You MUST provide the exact line number for each vulnerability found. Analyze the code content carefully and identify the specific line where the vulnerability exists.
 
-Return JSON array of vulnerabilities found. Each entry MUST include: line (integer line number, not null), type (string - e.g., "SQL Injection", "Command Injection"), severity (high/medium/low), description (string - detailed explanation up to 4 sentences), location (file path).
+Return JSON array of vulnerabilities found. Each entry MUST include: line (integer line number, not null), type (string - e.g., "SQL Injection", "Command Injection"), severity (high/medium/low), description (string - detailed explanation up to 3 sentences), location (file path).
 
-DESCRIPTION REQUIREMENTS: The description field must be detailed and informative, explaining what the vulnerability is, why it's a security risk, what the potential impact could be, and ideally how it should be fixed. Use up to 4 sentences to provide comprehensive context."""
+DESCRIPTION REQUIREMENTS: The description field must be detailed and informative, explaining what the vulnerability is, why it's a security risk, and what the potential impact could be. Do NOT suggest specific code fixes - only describe the security issue and its risks. Use up to 3 sentences to provide comprehensive context."""
 
     if file_content:
         user_prompt = f"""Analyze this file for injection vulnerabilities:
@@ -67,19 +67,19 @@ Example format:
     "line": 42,
     "type": "SQL Injection",
     "severity": "high",
-    "description": "SQL query constructed using string concatenation with user input at line 42, which creates a critical injection vulnerability. An attacker can manipulate the SQL query by injecting malicious SQL code through user input, potentially accessing, modifying, or deleting sensitive database records. This could lead to complete database compromise, data exfiltration, or unauthorized administrative access. The code should use parameterized queries or prepared statements to properly sanitize user input and prevent SQL injection attacks.",
+    "description": "SQL query constructed using string concatenation with user input at line 42, which creates a critical injection vulnerability. An attacker can manipulate the SQL query by injecting malicious SQL code through user input, potentially accessing, modifying, or deleting sensitive database records. This could lead to complete database compromise, data exfiltration, or unauthorized administrative access.",
     "location": "{file_path}"
   }},
   {{
     "line": 67,
     "type": "Command Injection",
     "severity": "high",
-    "description": "os.system() called with user-controlled input without sanitization at line 67",
+    "description": "os.system() called with user-controlled input without sanitization at line 67, allowing attackers to execute arbitrary system commands. This critical vulnerability could enable complete server compromise, data theft, or deployment of malware.",
     "location": "{file_path}"
   }}
 ]
 
-If no vulnerabilities found, return empty array []. Be specific about what injection issues you identify and ALWAYS include the line number. Provide detailed descriptions (up to 4 sentences) explaining the vulnerability, its risks, potential impact, and remediation."""
+If no vulnerabilities found, return empty array []. Be specific about what injection issues you identify and ALWAYS include the line number. Provide detailed descriptions (up to 3 sentences) explaining the vulnerability and its security risks."""
     else:
         user_prompt = f"""Analyze this file for injection vulnerabilities:
 
@@ -102,7 +102,7 @@ Example format:
   }}
 ]
 
-If no vulnerabilities found, return empty array []. Be specific about what injection issues you identify. Provide detailed descriptions (up to 4 sentences) explaining the vulnerability, its risks, potential impact, and remediation."""
+If no vulnerabilities found, return empty array []. Be specific about what injection issues you identify. Provide detailed descriptions (up to 3 sentences) explaining the vulnerability and its security risks."""
 
     messages = [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
     response = model.invoke(messages)

@@ -16,7 +16,7 @@ import os
 try:
     from openai import OpenAI
 except ImportError:
-    print("⚠️  OpenAI not installed. Run: pip install openai")
+    print("WARNING: OpenAI not installed. Run: pip install openai")
     OpenAI = None
 
 
@@ -87,7 +87,7 @@ def fetch_file_from_github(github_token: str, repo_owner: str, repo_name: str,
             - sha: str (file SHA, needed for updates)
             - error: str (if failed)
     """
-    print(f"📥 Fetching file: {file_path}...")
+    print(f"Fetching file: {file_path}...")
     
     headers = {
         "Authorization": f"Bearer {github_token}",
@@ -107,7 +107,7 @@ def fetch_file_from_github(github_token: str, repo_owner: str, repo_name: str,
         file_content = base64.b64decode(file_data["content"]).decode('utf-8')
         file_sha = file_data["sha"]
         
-        print(f"✅ File fetched.")
+        print(f"File fetched.")
         
         return {
             "success": True,
@@ -118,14 +118,14 @@ def fetch_file_from_github(github_token: str, repo_owner: str, repo_name: str,
         
     except requests.exceptions.HTTPError as e:
         error_msg = f"HTTP {e.response.status_code}: {e.response.text}"
-        print(f"❌ Failed: {error_msg}")
+        print(f"Failed: {error_msg}")
         return {
             "success": False,
             "error": error_msg
         }
     except Exception as e:
         error_msg = str(e)
-        print(f"❌ Error: {error_msg}")
+        print(f"Error: {error_msg}")
         return {
             "success": False,
             "error": error_msg
@@ -155,7 +155,7 @@ def generate_fix_with_llm(fix_request: FixRequest, file_content: str,
             - changes_summary: str
             - error: str (if failed)
     """
-    print(f"🤖 Generating fix with LLM...")
+    print(f"Generating fix with LLM...")
     
     if OpenAI is None:
         return {
@@ -227,7 +227,7 @@ The fixed_content should be the ENTIRE file, ready to replace the original.
         result_text = response.choices[0].message.content
         result_json = json.loads(result_text)
         
-        print(f"✅ Fix generated.")
+        print(f"Fix generated.")
         
         return {
             "success": True,
@@ -239,14 +239,14 @@ The fixed_content should be the ENTIRE file, ready to replace the original.
         
     except json.JSONDecodeError as e:
         error_msg = f"Failed to parse LLM response: {str(e)}"
-        print(f"❌ {error_msg}")
+        print(f"{error_msg}")
         return {
             "success": False,
             "error": error_msg
         }
     except Exception as e:
         error_msg = f"LLM error: {str(e)}"
-        print(f"❌ {error_msg}")
+        print(f"{error_msg}")
         return {
             "success": False,
             "error": error_msg
@@ -272,7 +272,7 @@ def generate_multi_vulnerability_fix(file_fix_request: FileFixRequest,
             - changes_summary: str
             - error: str (if failed)
     """
-    print(f"🤖 Generating fixes for {len(file_fix_request.vulnerabilities)} vulnerabilities...")
+    print(f"Generating fixes for {len(file_fix_request.vulnerabilities)} vulnerabilities...")
     
     if OpenAI is None:
         return {
@@ -311,24 +311,83 @@ def generate_multi_vulnerability_fix(file_fix_request: FileFixRequest,
 {file_content}
 ```
 
-## Your Task:
-1. Fix ALL {len(file_fix_request.vulnerabilities)} vulnerabilities listed above
-2. Generate the COMPLETE fixed file with all vulnerabilities patched
+## IMPORTANT - WHAT "FIXING" MEANS:
+Fixing a vulnerability means CHANGING THE CODE, not just adding comments. Here's what we expect:
+
+WRONG EXAMPLE 1 (No changes, code still vulnerable):
+```python
+# Original vulnerable code stays unchanged
+password = "admin123"  # Line 15
+user_query = "SELECT * FROM users WHERE id=" + user_id  # Line 42
+```
+
+WRONG EXAMPLE 2 (Only comments added, code still vulnerable):
+```javascript
+// SECURITY FIX: Instead of storing the token in localStorage, use a secure cookie
+// Assuming the backend is set up to handle secure cookies
+// Example: document.cookie = `token=${{token}}; Secure; HttpOnly; SameSite=Strict;`;
+localStorage.setItem('token', token); // VULNERABLE CODE STILL HERE - NOT FIXED!
+```
+
+CORRECT (Actual code changes that fix the vulnerability):
+```python
+# Fixed code with actual changes
+password = os.environ.get("ADMIN_PASSWORD")  # Line 15 - Fixed: moved to environment variable
+# Line 42 - Fixed: using parameterized query to prevent SQL injection
+user_query = "SELECT * FROM users WHERE id=?"
+cursor.execute(user_query, (user_id,))
+```
+
+## Your Task (READ CAREFULLY):
+You are being asked to fix {len(file_fix_request.vulnerabilities)} security vulnerabilities. This requires ACTUAL CODE CHANGES.
+
+1. Fix ALL {len(file_fix_request.vulnerabilities)} vulnerabilities with REAL code modifications
+2. Generate the COMPLETE fixed file with all vulnerabilities ACTUALLY patched (not just identified)
 3. Maintain all original formatting, structure, and functionality
-4. Only fix the security issues, don't refactor unrelated code
+4. Only modify code related to security fixes - don't refactor unrelated code
 5. Add brief comments near fixes explaining what was changed
 6. Ensure all fixes work together cohesively
+
+## CRITICAL CONSTRAINTS (Hallucination Prevention):
+- DO NOT return unchanged code - you MUST fix the vulnerabilities
+- DO NOT just add comments - you MUST modify the vulnerable code
+- DO NOT modify code unrelated to the security fixes
+- DO NOT add new features or refactor working code
+- DO NOT break existing function signatures or API contracts
+- DO NOT change imports unless required for the security fix
+- Each fix MUST include actual code changes that resolve the vulnerability
+- Each fix MUST be directly traceable to a specific vulnerability from the list above
+
+EXAMPLE OF WHAT TO DO:
+- Vulnerability: "SQL Injection at line 42"
+- BAD: Leave line 42 unchanged and add a comment
+- GOOD: Change line 42 from `query = "SELECT * FROM users WHERE id=" + userId` to `query = "SELECT * FROM users WHERE id=?"` and add parameter binding
 
 ## Output Format:
 Return a JSON object with these fields:
 {{
     "fixed_content": "the complete fixed file content with ALL fixes applied",
     "pr_title": "concise PR title mentioning multiple fixes (max 80 chars)",
-    "pr_description": "detailed PR description in markdown listing all fixes",
-    "changes_summary": "bullet points of all changes made"
+    "pr_description": "Markdown PR description with sections: Summary (2-3 sentences), Security Vulnerabilities Fixed (list each with location/issue/fix), Changes Made (bullet points), Testing Recommendations (checkbox format), Potential Shortcomings (if any), Security Impact (before/after)",
+    "changes_summary": "bullet points of all changes made",
+    "testing_recommendations": ["specific test case 1", "specific test case 2", "..."],
+    "potential_shortcomings": ["limitation 1 if any", "limitation 2 if any", "..."] or empty array if none
 }}
 
-IMPORTANT: The fixed_content should be the ENTIRE file, ready to replace the original, with ALL vulnerabilities fixed.
+CRITICAL REMINDERS BEFORE YOU RESPOND:
+1. Did you ACTUALLY CHANGE the vulnerable code? (Not just add comments)
+2. Is the fixed_content DIFFERENT from the original? (Must have real modifications)
+3. Did you implement CONCRETE fixes? (e.g., parameterized queries, environment variables, proper validation)
+4. Did you make actual code changes for EVERY vulnerability?
+
+The fixed_content MUST be:
+- The ENTIRE file, ready to replace the original
+- DIFFERENT from the original with actual code changes
+- Have ALL {len(file_fix_request.vulnerabilities)} vulnerabilities FIXED with code modifications (not just comments)
+
+Required fields:
+- testing_recommendations: list specific functional tests developers should run
+- potential_shortcomings: document if file was too large or missing context (if any)
 """
         
         response = client.chat.completions.create(
@@ -336,7 +395,41 @@ IMPORTANT: The fixed_content should be the ENTIRE file, ready to replace the ori
             messages=[
                 {
                     "role": "system",
-                    "content": "You are a senior security engineer with 10+ years of experience in secure code remediation. You MUST make actual code changes to fix vulnerabilities - returning unchanged code is unacceptable. Always implement production-ready security solutions using industry best practices. Always return valid JSON with complete fixed code."
+                    "content": """You are a senior security engineer with 10+ years of experience in secure code remediation.
+
+CRITICAL REQUIREMENT: You MUST make actual code changes to fix the vulnerabilities. Returning unchanged code will result in rejection.
+
+MANDATORY RULES:
+1. UNACCEPTABLE: Returning code without security fixes
+2. UNACCEPTABLE: Making unrelated changes or refactoring working code
+3. UNACCEPTABLE: Breaking existing functionality, function signatures, or API contracts
+4. REQUIRED: Fix ALL listed vulnerabilities with actual code changes
+5. REQUIRED: Follow OWASP guidelines and industry security standards
+6. REQUIRED: When in doubt, implement the MOST SECURE solution
+
+YOUR TASK IS TO FIX VULNERABILITIES WITH ACTUAL CODE CHANGES:
+You MUST make actual code modifications. Adding only comments is NOT acceptable. Here's how to fix common vulnerabilities:
+
+- SQL Injection → Replace string concatenation with parameterized queries
+- Hardcoded Secrets → Replace with environment variable access (e.g., process.env.API_KEY, os.getenv())
+- Weak Crypto (MD5/SHA1) → Replace with bcrypt/Argon2/SHA-256
+- Missing Auth Checks → Add authentication middleware/guards
+- XSS Vulnerabilities → Add input sanitization/escaping
+- Command Injection → Replace shell commands with safe APIs or add input validation
+- Weak Password Policy → Add password strength validation logic
+- Missing Input Validation → Add validation logic and error handling
+- Insecure Storage → Replace localStorage with secure cookie implementation or add encryption
+
+NO EXCEPTIONS: Every vulnerability must be fixed with actual code changes. If a fix seems risky, implement the most minimal safe version rather than adding comments.
+
+VALIDATION CHECKPOINT:
+Before returning your response, verify:
+1. Did I modify the vulnerable code? (If NO → Fix it now!)
+2. Are the security issues actually resolved? (If NO → Fix them properly!)
+3. Did I only change security-related code? (If NO → Remove unrelated changes!)
+4. Will the code still function correctly? (If NO → Revise the fix!)
+
+Always return valid JSON with complete FIXED code, testing recommendations, and any limitations."""
                 },
                 {
                     "role": "user",
@@ -350,26 +443,45 @@ IMPORTANT: The fixed_content should be the ENTIRE file, ready to replace the ori
         result_text = response.choices[0].message.content
         result_json = json.loads(result_text)
         
-        print(f"✅ All fixes generated.")
+        # Validate that actual changes were made
+        fixed_content_normalized = result_json["fixed_content"].strip()
+        original_content_normalized = file_content.strip()
+        
+        if fixed_content_normalized == original_content_normalized:
+            error_msg = (
+                "LLM returned unchanged code. The model failed to make required security fixes. "
+                f"All {len(file_fix_request.vulnerabilities)} vulnerabilities require actual code modifications. "
+                "Please retry the fix operation."
+            )
+            print(f"{error_msg}")
+            return {
+                "success": False,
+                "error": error_msg,
+                "vulnerabilities_count": len(file_fix_request.vulnerabilities)
+            }
+        
+        print(f"All {len(file_fix_request.vulnerabilities)} fixes generated with code changes.")
         
         return {
             "success": True,
             "fixed_content": result_json["fixed_content"],
             "pr_title": result_json["pr_title"],
             "pr_description": result_json["pr_description"],
-            "changes_summary": result_json["changes_summary"]
+            "changes_summary": result_json["changes_summary"],
+            "testing_recommendations": result_json.get("testing_recommendations", []),
+            "potential_shortcomings": result_json.get("potential_shortcomings", [])
         }
         
     except json.JSONDecodeError as e:
         error_msg = f"Failed to parse LLM response: {str(e)}"
-        print(f"❌ {error_msg}")
+        print(f"{error_msg}")
         return {
             "success": False,
             "error": error_msg
         }
     except Exception as e:
         error_msg = f"LLM error: {str(e)}"
-        print(f"❌ {error_msg}")
+        print(f"{error_msg}")
         return {
             "success": False,
             "error": error_msg
@@ -395,7 +507,7 @@ def create_branch(github_token, repo_owner, repo_name, new_branch_name, base_bra
     Returns:
         dict: Response with success status and branch info
     """
-    print(f"🌿 Creating branch: {new_branch_name}...")
+    print(f"Creating branch: {new_branch_name}...")
     
     # GitHub API base URL
     base_url = "https://api.github.com"
@@ -447,7 +559,7 @@ def create_branch(github_token, repo_owner, repo_name, new_branch_name, base_bra
         
         result = create_response.json()
         
-        print(f"✅ Branch created.")
+        print(f"Branch created.")
         
         return {
             "success": True,
@@ -501,7 +613,7 @@ def commit_fixed_file(github_token: str, repo_owner: str, repo_name: str,
             - commit_sha: str
             - error: str (if failed)
     """
-    print(f"💾 Committing fix...")
+    print(f"Committing fix...")
     
     headers = {
         "Authorization": f"Bearer {github_token}",
@@ -527,7 +639,7 @@ def commit_fixed_file(github_token: str, repo_owner: str, repo_name: str,
         result = response.json()
         commit_sha = result["commit"]["sha"]
         
-        print(f"✅ Committed.")
+        print(f"Committed.")
         
         return {
             "success": True,
@@ -537,14 +649,14 @@ def commit_fixed_file(github_token: str, repo_owner: str, repo_name: str,
         
     except requests.exceptions.HTTPError as e:
         error_msg = f"HTTP {e.response.status_code}: {e.response.text}"
-        print(f"❌ Failed: {error_msg}")
+        print(f"Failed: {error_msg}")
         return {
             "success": False,
             "error": error_msg
         }
     except Exception as e:
         error_msg = str(e)
-        print(f"❌ Error: {error_msg}")
+        print(f"Error: {error_msg}")
         return {
             "success": False,
             "error": error_msg
@@ -577,7 +689,7 @@ def create_pull_request(github_token: str, repo_owner: str, repo_name: str,
             - pr_url: str
             - error: str (if failed)
     """
-    print(f"🔃 Creating pull request...")
+    print(f"Creating pull request...")
     
     headers = {
         "Authorization": f"Bearer {github_token}",
@@ -601,7 +713,7 @@ def create_pull_request(github_token: str, repo_owner: str, repo_name: str,
         pr_number = result["number"]
         pr_url = result["html_url"]
         
-        print(f"✅ PR created: #{pr_number}")
+        print(f"PR created: #{pr_number}")
         
         return {
             "success": True,
@@ -611,14 +723,14 @@ def create_pull_request(github_token: str, repo_owner: str, repo_name: str,
         
     except requests.exceptions.HTTPError as e:
         error_msg = f"HTTP {e.response.status_code}: {e.response.text}"
-        print(f"❌ Failed: {error_msg}")
+        print(f"Failed: {error_msg}")
         return {
             "success": False,
             "error": error_msg
         }
     except Exception as e:
         error_msg = str(e)
-        print(f"❌ Error: {error_msg}")
+        print(f"Error: {error_msg}")
         return {
             "success": False,
             "error": error_msg
@@ -649,7 +761,7 @@ def process_file_fix_request(
     Returns:
         dict with complete results or error
     """
-    print(f"\n🚀 Multi-Vulnerability Fix Workflow")
+    print(f"\nMulti-Vulnerability Fix Workflow")
     print(f"   Repository: {file_fix_request.repository}")
     print(f"   File: {file_fix_request.file_path}")
     print(f"   Risk Level: {file_fix_request.risk_level}")
@@ -693,6 +805,23 @@ def process_file_fix_request(
     fixed_content = llm_result["fixed_content"]
     pr_title = llm_result["pr_title"]
     pr_description = llm_result["pr_description"]
+    testing_recommendations = llm_result.get("testing_recommendations", [])
+    potential_shortcomings = llm_result.get("potential_shortcomings", [])
+    
+    # Enhance PR description with testing recommendations and potential shortcomings
+    # if they're not already in the description
+    if testing_recommendations and "Testing Recommendations" not in pr_description:
+        pr_description += "\n\n## Testing Recommendations\n"
+        for rec in testing_recommendations:
+            pr_description += f"- [ ] {rec}\n"
+    
+    if potential_shortcomings and "Potential Shortcomings" not in pr_description:
+        pr_description += "\n\n## Potential Shortcomings\n"
+        for shortcoming in potential_shortcomings:
+            pr_description += f"- {shortcoming}\n"
+    
+    # Add AI-generated footer
+    pr_description += f"\n\n---\n*Auto-generated security fix | Fixed {len(file_fix_request.vulnerabilities)} vulnerabilities with code changes | Please review carefully before merging*"
     
     # STEP 3: Create branch
     # Use risk level in branch name
@@ -742,8 +871,9 @@ def process_file_fix_request(
         return {"success": False, "step": "pr", "error": pr_result["error"]}
     
     # SUCCESS!
-    print(f"\n✅ Multi-vulnerability workflow completed!")
-    print(f"   PR: {pr_result['pr_url']}\n")
+    print(f"\nMulti-vulnerability workflow completed!")
+    print(f"   PR: {pr_result['pr_url']}")
+    print(f"   Fixed {len(file_fix_request.vulnerabilities)} vulnerabilities with code changes\n")
     
     return {
         "success": True,
@@ -752,7 +882,9 @@ def process_file_fix_request(
         "commit_sha": commit_result["commit_sha"],
         "pr_number": pr_result["pr_number"],
         "pr_url": pr_result["pr_url"],
-        "pr_title": pr_title
+        "pr_title": pr_title,
+        "testing_recommendations": testing_recommendations,
+        "potential_shortcomings": potential_shortcomings
     }
 
 
@@ -772,7 +904,7 @@ def process_security_fix(fix_request: FixRequest, github_token: str,
     Returns:
         dict with complete results or error
     """
-    print(f"\n🚀 Security Fix Workflow")
+    print(f"\nSecurity Fix Workflow")
     print(f"   Repository: {fix_request.repository}")
     print(f"   File: {fix_request.file_path}")
     print(f"   Severity: {fix_request.severity}\n")
@@ -853,7 +985,7 @@ def process_security_fix(fix_request: FixRequest, github_token: str,
         return {"success": False, "step": "pr", "error": pr_result["error"]}
     
     # SUCCESS!
-    print(f"\n✅ Workflow completed!")
+    print(f"\nWorkflow completed!")
     print(f"   PR: {pr_result['pr_url']}\n")
     
     return {
@@ -885,23 +1017,23 @@ def verify_token(github_token):
         user_data = response.json()
         scopes = response.headers.get("X-OAuth-Scopes", "").split(", ")
         
-        print("🔐 Token Verification")
+        print("Token Verification")
         print("=" * 60)
-        print(f"✅ Token is valid!")
-        print(f"👤 Authenticated as: {user_data.get('login')}")
-        print(f"📧 Email: {user_data.get('email', 'N/A')}")
-        print(f"🔑 Scopes: {', '.join(scopes)}")
-        print(f"🔒 Has 'repo' scope: {'repo' in scopes}")
+        print(f"Token is valid!")
+        print(f"Authenticated as: {user_data.get('login')}")
+        print(f"Email: {user_data.get('email', 'N/A')}")
+        print(f"Scopes: {', '.join(scopes)}")
+        print(f"Has 'repo' scope: {'repo' in scopes}")
         print("=" * 60)
         
         if 'repo' not in scopes:
-            print("⚠️  WARNING: Token doesn't have 'repo' scope!")
+            print("WARNING: Token doesn't have 'repo' scope!")
             print("   You need 'repo' scope to create branches.")
             return False
         
         return True
         
     except requests.exceptions.HTTPError as e:
-        print(f"❌ Token verification failed: {e.response.status_code}")
+        print(f"Token verification failed: {e.response.status_code}")
         print(f"   {e.response.text}")
         return False
