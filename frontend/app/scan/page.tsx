@@ -30,7 +30,7 @@ function ScanContent() {
 
     const startScan = async () => {
       // Only use API for full repos, fallback to direct fetch for single files if needed
-      if (repoUrl.match(/github\.com\/[^/]+\/[^/]+$/)) {
+      if (repoUrl.match(/github\.com\/([^/]+)\/([^/]+)$/)) {
         setIsLoading(true);
         setScanStatus("Scanning repository structure...");
         setRepoFiles([]); // Clear any previous files
@@ -90,7 +90,7 @@ function ScanContent() {
           setIsLoading(false);
         }
       } else if (repoUrl.includes("/blob/")) {
-        // Single file logic
+        // Single file logic (unchanged for now)
         const rawUrl = repoUrl
           .replace("github.com", "raw.githubusercontent.com")
           .replace("/blob/", "/");
@@ -113,17 +113,7 @@ function ScanContent() {
         setCurrentCode(file.content);
         return;
       }
-
-      // Fallback
-      const [_, owner, repo] = repoUrl?.match(/github\.com\/([^/]+)\/([^/]+)/) || [];
-      const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/main/${file.path}`;
-      
-      setCurrentCode(null);
-      
-      fetch(rawUrl)
-        .then(res => res.text())
-        .then(text => setCurrentCode(text))
-        .catch(err => console.error("Failed to fetch file content", err));
+      // ... fallback fetch logic ...
     }
   }, [repoFiles, currentFileIndex, repoUrl]);
 
