@@ -7,6 +7,7 @@ import { Suspense } from "react";
 import { ShieldCheck } from "lucide-react";
 import { motion } from "framer-motion";
 import Link from "next/link";
+import { supabase } from "@/lib/supabase";
 
 function ScanContent() {
   const router = useRouter();
@@ -29,8 +30,22 @@ function ScanContent() {
   const [completedFiles, setCompletedFiles] = useState<Set<number>>(new Set());
   const [isScanningAnimation, setIsScanningAnimation] = useState(false);
   const [pendingFileChanges, setPendingFileChanges] = useState<Array<{fileIndex: number, eventData: any}>>([]);
+  const [showScanner, setShowScanner] = useState(false);
+  const [agentLogs, setAgentLogs] = useState<Array<{ line?: number; file_index?: number; message: string }>>([]);
   const lastFetchedFileIndexRef = useRef<number>(-1);
   const isScanningAnimationRef = useRef(false); // Ref to track scanning state synchronously
+
+  // Check authentication
+  useEffect(() => {
+    const checkAuth = async () => {
+      const { data: { user }, error } = await supabase.auth.getUser();
+      if (error || !user) {
+        router.push("/auth/login");
+        return;
+      }
+    };
+    checkAuth();
+  }, [router]);
 
   useEffect(() => {
     if (!repoUrl) {
@@ -54,8 +69,6 @@ function ScanContent() {
         
         try {
           setScanStatus("Analyzing files and identifying suspicious patterns...");
-          
-          console.log("Starting scan for URL:", cleanUrl);
           
           let res;
           try {
@@ -91,8 +104,6 @@ function ScanContent() {
             setIsLoading(false);
             return;
           }
-          
-          console.log("Stream started, reading events...");
 
           let buffer = "";
 
@@ -137,42 +148,30 @@ function ScanContent() {
                   }
                   break;
 
+                case "agent_log":
+                  // Handle agent logs with optional line and file_index
+                  if (eventData.message) {
+                    setAgentLogs(prev => {
+                      // Avoid duplicates
+                      const logKey = `${eventData.file_index || currentFileIndex}:${eventData.line || -1}:${eventData.message}`;
+                      const exists = prev.some(l => 
+                        `${l.file_index || currentFileIndex}:${l.line || -1}:${l.message}` === logKey
+                      );
+                      if (exists) return prev;
+                      return [...prev, {
+                        line: eventData.line,
+                        file_index: eventData.file_index !== undefined ? eventData.file_index : currentFileIndex,
+                        message: eventData.message
+                      }];
+                    });
+                  }
+                  break;
+
                 case "file_analysis_start":
                   if (eventData.file_index !== undefined) {
                     const fileIndex = eventData.file_index;
                     
-                    // #region agent log
-                    fetch('http://127.0.0.1:7242/ingest/d7ed34c7-a4a6-4f15-8a74-de07d29ed0ca',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'scan/page.tsx:107',message:'file_analysis_start received',data:{fileIndex,currentFileIndex,isScanningAnimation:isScanningAnimationRef.current,willSwitch:fileIndex!==currentFileIndex},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
-                    // #endregion
-                    
-                    // If we're currently scanning and this is a different file, queue it
-                    if (isScanningAnimationRef.current && fileIndex !== currentFileIndex) {
-                      setPendingFileChanges(prev => {
-                        // Only add if not already in queue
-                        if (!prev.some(p => p.fileIndex === fileIndex)) {
-                          // #region agent log
-                          fetch('http://127.0.0.1:7242/ingest/d7ed34c7-a4a6-4f15-8a74-de07d29ed0ca',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'scan/page.tsx:117',message:'Queueing file change',data:{fileIndex,currentFileIndex,queueLength:prev.length,newQueueLength:prev.length+1},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
-                          // #endregion
-                          return [...prev, { fileIndex, eventData }];
-                        }
-                        return prev;
-                      });
-                      break;
-                    }
-                    
-                    // Only switch files if it's actually a different file AND we're not currently scanning
-                    if (fileIndex !== currentFileIndex && !isScanningAnimationRef.current) {
-                      // #region agent log
-                      fetch('http://127.0.0.1:7242/ingest/d7ed34c7-a4a6-4f15-8a74-de07d29ed0ca',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'scan/page.tsx:120',message:'Switching file',data:{fromFileIndex:currentFileIndex,toFileIndex:fileIndex,isScanningAnimation:isScanningAnimationRef.current},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
-                      // #endregion
-                      setCurrentFileIndex(fileIndex);
-                      // Only clear code when switching to a different file
-                      setCurrentCode(null);
-                      // Reset scanning state - will be set to true when code loads
-                      isScanningAnimationRef.current = false;
-                      setIsScanningAnimation(false);
-                    }
-                    
+                    // Always process vulnerabilities first
                     if (eventData.vulnerabilities && Array.isArray(eventData.vulnerabilities)) {
                       setAuthVulnerabilities(prev => {
                         const filtered = prev.filter(v => v.file_path !== eventData.file_path);
@@ -186,6 +185,28 @@ function ScanContent() {
                     }
                     
                     setScanStatus(`Analyzing ${eventData.file_name || eventData.file_path || "file"}... Found ${eventData.vulnerabilities?.length || 0} vulnerability/vulnerabilities`);
+                    
+                    // If we're currently scanning and this is a different file, queue it
+                    if (isScanningAnimationRef.current && fileIndex !== currentFileIndex) {
+                      setPendingFileChanges(prev => {
+                        // Only add if not already in queue
+                        if (!prev.some(p => p.fileIndex === fileIndex)) {
+                          return [...prev, { fileIndex, eventData }];
+                        }
+                        return prev;
+                      });
+                      break;
+                    }
+                    
+                    // Only switch files if it's actually a different file AND we're not currently scanning
+                    if (fileIndex !== currentFileIndex && !isScanningAnimationRef.current) {
+                      setCurrentFileIndex(fileIndex);
+                      // Only clear code when switching to a different file
+                      setCurrentCode(null);
+                      // Reset scanning state - will be set to true when code loads
+                      isScanningAnimationRef.current = false;
+                      setIsScanningAnimation(false);
+                    }
                   }
                   break;
 
@@ -206,13 +227,39 @@ function ScanContent() {
 
                 case "vulnerability":
                   setAuthVulnerabilities(prev => {
-                    const exists = prev.some(v => 
-                      v.location === eventData.location && 
-                      v.type === eventData.type &&
-                      v.line === eventData.line
-                    );
+                    // More precise deduplication: check location, type, line, and file_path
+                    const exists = prev.some(v => {
+                      const sameLocation = v.location === eventData.location || 
+                        (v.location && eventData.location && v.location === eventData.location);
+                      const sameType = v.type === eventData.type;
+                      const sameLine = v.line === eventData.line;
+                      const sameFilePath = v.file_path === eventData.file_path ||
+                        (v.file_path && eventData.file_path && v.file_path === eventData.file_path);
+                      
+                      return sameLocation && sameType && sameLine && (sameFilePath || (!v.file_path && !eventData.file_path));
+                    });
                     if (exists) return prev;
-                    return [...prev, eventData];
+                    
+                    // Try to assign file_index if not present
+                    let vulnWithFileIndex = { ...eventData };
+                    if (vulnWithFileIndex.file_index === undefined && repoFiles.length > 0) {
+                      const vulnPath = vulnWithFileIndex.location || vulnWithFileIndex.file_path || "";
+                      const matchingFileIndex = repoFiles.findIndex((f: any) => {
+                        const filePath = f.path || "";
+                        const fileName = f.name || "";
+                        // Exact match preferred, then check if vulnerability path ends with file path or name
+                        return vulnPath === filePath || 
+                               vulnPath === fileName ||
+                               (filePath && vulnPath.endsWith(filePath)) ||
+                               (fileName && vulnPath.endsWith(fileName));
+                      });
+                      if (matchingFileIndex >= 0) {
+                        vulnWithFileIndex.file_index = matchingFileIndex;
+                        vulnWithFileIndex.file_path = repoFiles[matchingFileIndex].path || vulnPath;
+                      }
+                    }
+                    
+                    return [...prev, vulnWithFileIndex];
                   });
                   break;
 
@@ -227,7 +274,7 @@ function ScanContent() {
                     }));
                     setRepoFiles(mappedFiles);
                     setIsLoading(false);
-                    setScanStatus(`Found ${mappedFiles.length} suspicious file(s). Analyzing...`);
+                    setScanStatus(`Found ${mappedFiles.length} suspicious file(s). Ready to scan!`);
                   }
                   break;
 
@@ -241,6 +288,7 @@ function ScanContent() {
                       reason: f.reason || "",
                     }));
                     setRepoFiles(files);
+                    setIsLoading(false);
                     // Mark all files as complete EXCEPT the last file
                     // The last file will be marked complete when its animation finishes naturally
                     setCompletedFiles(prev => {
@@ -271,7 +319,10 @@ function ScanContent() {
                     setAuthVulnerabilities(eventData.auth_vulnerabilities);
                   }
                   setScanStatus(`Analysis complete. Found ${eventData.auth_vulnerabilities?.length || 0} vulnerability/vulnerabilities`);
-                  setIsLoading(false);
+                  // Don't set isLoading to false here if we already did above
+                  if (!eventData.suspicious_files) {
+                    setIsLoading(false);
+                  }
                   break;
 
                 case "error":
@@ -321,15 +372,8 @@ function ScanContent() {
 
   // Fetch content when current file changes (for repo mode)
   useEffect(() => {
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/d7ed34c7-a4a6-4f15-8a74-de07d29ed0ca',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'scan/page.tsx:230',message:'File fetch effect triggered',data:{repoFilesLength:repoFiles.length,currentFileIndex,lastFetched:lastFetchedFileIndexRef.current,hasFile:!!repoFiles[currentFileIndex]},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
-    // #endregion
-    
     // Only fetch if this is a different file than we last fetched AND repoFiles is available
     if (lastFetchedFileIndexRef.current === currentFileIndex && repoFiles.length > 0) {
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/d7ed34c7-a4a6-4f15-8a74-de07d29ed0ca',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'scan/page.tsx:235',message:'Skipping fetch, same file as last fetch',data:{fileIndex:currentFileIndex},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
-      // #endregion
       return;
     }
     
@@ -338,9 +382,6 @@ function ScanContent() {
       lastFetchedFileIndexRef.current = currentFileIndex;
       
       if (file.content) {
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/d7ed34c7-a4a6-4f15-8a74-de07d29ed0ca',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'scan/page.tsx:243',message:'Setting code from file.content',data:{fileIndex:currentFileIndex,codeLength:file.content.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
-        // #endregion
         setCurrentCode(file.content);
         isScanningAnimationRef.current = true;
         setIsScanningAnimation(true); // Mark that we're starting to scan this file
@@ -353,9 +394,6 @@ function ScanContent() {
       if (match) {
         const [_, owner, repo] = match;
         
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/d7ed34c7-a4a6-4f15-8a74-de07d29ed0ca',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'scan/page.tsx:253',message:'Clearing code before fetch',data:{fileIndex:currentFileIndex,filePath:file.path},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
-        // #endregion
         setCurrentCode(null);
         
         // Try proxy API route first (with GitHub token), fallback to direct URL
@@ -381,21 +419,11 @@ function ScanContent() {
             if (data.error) {
               throw new Error(data.error);
             }
-            // #region agent log
-            fetch('http://127.0.0.1:7242/ingest/d7ed34c7-a4a6-4f15-8a74-de07d29ed0ca',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'scan/page.tsx:305',message:'Code fetched via proxy and set',data:{fileIndex:currentFileIndex,codeLength:data.content?.length||0},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
-            // #endregion
             setCurrentCode(data.content || "// Error: Could not load file content");
             isScanningAnimationRef.current = true;
             setIsScanningAnimation(true);
           })
           .catch((proxyErr: any) => {
-            // Handle network errors specifically
-            if (proxyErr instanceof TypeError && proxyErr.message === "Failed to fetch") {
-              console.error("Network error fetching from proxy:", proxyErr);
-            }
-            // #region agent log
-            fetch('http://127.0.0.1:7242/ingest/d7ed34c7-a4a6-4f15-8a74-de07d29ed0ca',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'scan/page.tsx:315',message:'Proxy failed, trying direct URL',data:{error:proxyErr.message,fileIndex:currentFileIndex},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
-            // #endregion
             // Fallback to direct GitHub URL
             fetch(directUrl)
               .then(res => {
@@ -411,17 +439,11 @@ function ScanContent() {
                 return res.text();
               })
               .then(text => {
-                // #region agent log
-                fetch('http://127.0.0.1:7242/ingest/d7ed34c7-a4a6-4f15-8a74-de07d29ed0ca',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'scan/page.tsx:325',message:'Code fetched via direct URL and set',data:{fileIndex:currentFileIndex,codeLength:text?.length||0},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
-                // #endregion
                 setCurrentCode(text || "// Error: Could not load file content");
                 isScanningAnimationRef.current = true;
                 setIsScanningAnimation(true);
               })
               .catch((err: any) => {
-                // #region agent log
-                fetch('http://127.0.0.1:7242/ingest/d7ed34c7-a4a6-4f15-8a74-de07d29ed0ca',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'scan/page.tsx:332',message:'Failed to fetch file content from both proxy and direct URL',data:{error:err.message,fileIndex:currentFileIndex,filePath:file.path},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
-                // #endregion
                 console.error("Failed to fetch file content", err);
                 // Handle network errors specifically
                 if (err instanceof TypeError && err.message === "Failed to fetch") {
@@ -473,18 +495,11 @@ function ScanContent() {
   }, [currentFileIndex, repoUrl, repoFiles]); // Need repoFiles to know when files are available
 
   const handleScanStart = () => {
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/d7ed34c7-a4a6-4f15-8a74-de07d29ed0ca',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'scan/page.tsx:289',message:'handleScanStart called',data:{currentFileIndex},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
-    // #endregion
     isScanningAnimationRef.current = true;
     setIsScanningAnimation(true);
   };
 
   const handleScanComplete = () => {
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/d7ed34c7-a4a6-4f15-8a74-de07d29ed0ca',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'scan/page.tsx:293',message:'handleScanComplete called',data:{currentFileIndex,pendingChangesCount:pendingFileChanges.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
-    // #endregion
-    
     // Mark current file as complete when animation finishes
     setCompletedFiles(prev => new Set(prev).add(currentFileIndex));
     
@@ -492,32 +507,33 @@ function ScanContent() {
     setIsScanningAnimation(false);
     
     // Process the next file in the queue (FIFO - first in, first out)
-    if (pendingFileChanges.length > 0) {
-      const [nextChange, ...remaining] = pendingFileChanges;
-      const { fileIndex, eventData } = nextChange;
-      setPendingFileChanges(remaining);
-      
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/d7ed34c7-a4a6-4f15-8a74-de07d29ed0ca',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'scan/page.tsx:318',message:'Processing queued file change',data:{fromFileIndex:currentFileIndex,toFileIndex:fileIndex,remainingInQueue:remaining.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
-      // #endregion
-      
-      setCurrentFileIndex(fileIndex);
-      
-      if (eventData.vulnerabilities && Array.isArray(eventData.vulnerabilities)) {
-        setAuthVulnerabilities(prev => {
-          const filtered = prev.filter(v => v.file_path !== eventData.file_path);
-          const newVulns = eventData.vulnerabilities.map((v: any) => ({
-            ...v,
-            file_index: fileIndex,
-            file_path: eventData.file_path
-          }));
-          return [...filtered, ...newVulns];
-        });
+    setPendingFileChanges(prev => {
+      if (prev.length > 0) {
+        const [nextChange, ...remaining] = prev;
+        const { fileIndex, eventData } = nextChange;
+        
+        // Update vulnerabilities if available
+        if (eventData.vulnerabilities && Array.isArray(eventData.vulnerabilities)) {
+          setAuthVulnerabilities(prevVulns => {
+            const filtered = prevVulns.filter(v => v.file_path !== eventData.file_path);
+            const newVulns = eventData.vulnerabilities.map((v: any) => ({
+              ...v,
+              file_index: fileIndex,
+              file_path: eventData.file_path
+            }));
+            return [...filtered, ...newVulns];
+          });
+        }
+        
+        // Switch to the next file
+        setCurrentFileIndex(fileIndex);
+        setCurrentCode(null);
+        setScanStatus(`Analyzing ${eventData.file_name || eventData.file_path || "file"}... Found ${eventData.vulnerabilities?.length || 0} vulnerability/vulnerabilities`);
+        
+        return remaining;
       }
-      
-      setScanStatus(`Analyzing ${eventData.file_name || eventData.file_path || "file"}... Found ${eventData.vulnerabilities?.length || 0} vulnerability/vulnerabilities`);
-      setCurrentCode(null);
-    }
+      return prev;
+    });
   };
 
   // Extract project name from repo URL
@@ -596,7 +612,23 @@ function ScanContent() {
               <p className="text-[#D6D6D6] text-opacity-40 text-xs mt-2">This may take a moment...</p>
             </div>
           </div>
-        ) : repoFiles.length > 0 ? (
+        ) : repoFiles.length > 0 && !showScanner ? (
+          <div className="flex items-center justify-center h-full bg-[#0E141A]">
+            <div className="text-center">
+              <div className="mb-6">
+                <ShieldCheck className="w-20 h-20 text-[#6699C9] mx-auto mb-4" />
+                <p className="text-[#D6D6D6] text-lg mb-6">Scan Ready!</p>
+                <button
+                  onClick={() => setShowScanner(true)}
+                  className="bg-[#6699C9] hover:bg-[#5a8ab8] text-white px-8 py-3 rounded-lg font-medium transition-colors flex items-center gap-2 mx-auto cursor-pointer"
+                >
+                  <ShieldCheck className="h-5 w-5" />
+                  Start Scan
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : repoFiles.length > 0 && showScanner ? (
           <ScannerDemo 
             initialCode={currentCode} 
             repoFiles={repoFiles}
@@ -608,6 +640,8 @@ function ScanContent() {
             completedFiles={completedFiles}
             scanStatus={scanStatus}
             currentFilePath={currentFilePath}
+            repoUrl={repoUrl}
+            agentLogs={agentLogs}
           />
         ) : (
           <div className="flex items-center justify-center h-full bg-[#0E141A]">

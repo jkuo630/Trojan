@@ -29,6 +29,11 @@ interface CodeScannerProps {
   skipAnimation?: boolean; // If true, skip animation and show all lines as scanned
   selectedLine?: number | null; // Line number (1-indexed) to show vulnerability popup for
   selectedVulnerability?: VulnerabilityCardData | null; // Vulnerability data to display in popup
+  selectedVulnerabilityFixState?: "default" | "fixing" | "fixed" | "error"; // Fix state for selected vulnerability
+  selectedVulnerabilityPRUrl?: string | null; // PR URL for the selected vulnerability
+  repository?: string; // Repository in format "owner/repo"
+  onFix?: (data: VulnerabilityCardData) => void; // Handler for fix button click
+  onNext?: () => void; // Handler for "go to next vulnerability" button click
 }
 
 interface CodeLineProps {
@@ -119,6 +124,11 @@ export function CodeScanner({
   skipAnimation = false,
   selectedLine = null,
   selectedVulnerability = null,
+  selectedVulnerabilityFixState = "default",
+  selectedVulnerabilityPRUrl = null,
+  repository,
+  onFix,
+  onNext,
 }: CodeScannerProps) {
   const [tokens, setTokens] = useState<ThemedToken[][]>([]);
   const [loading, setLoading] = useState(true);
@@ -256,7 +266,7 @@ export function CodeScanner({
     let frameCount = 0; // Count frames to control speed
 
     const processFrame = () => {
-      const LINES_PER_FRAME = 4; // Lines per frame (fractional = slower)
+      const LINES_PER_FRAME = 24; // Lines per frame (fractional = slower)
       const FRAME_DELAY = Math.ceil(1 / LINES_PER_FRAME); // Process one step every N frames
       
       const container = containerRef.current;
@@ -481,7 +491,11 @@ export function CodeScanner({
                         <div className="px-4 pt-3 pb-2">
                           <VulnerabilityPopUp
                             data={selectedVulnerability}
-                            state="default"
+                            state={selectedVulnerabilityFixState}
+                            prUrl={selectedVulnerabilityPRUrl}
+                            repository={repository}
+                            onFix={onFix}
+                            onNext={onNext}
                           />
                         </div>
                       </td>

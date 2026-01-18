@@ -26,7 +26,7 @@ export default function LoginPage() {
 
       if (error) throw error;
 
-      router.push("/projects");
+      router.push("/");
     } catch (err: any) {
       setError(err.message || "Failed to login");
     } finally {
@@ -34,8 +34,6 @@ export default function LoginPage() {
     }
   };
 
-<<<<<<< HEAD
-=======
   const handleGitHubLogin = async () => {
     setLoading(true);
     setError("");
@@ -56,7 +54,6 @@ export default function LoginPage() {
     }
   };
 
->>>>>>> ec4775d74a727c9454d744f04358018aef183d7a
   return (
     <main className="flex min-h-screen flex-col items-center justify-center bg-[#0d1117] text-white">
       <div className="w-full max-w-md px-4">
@@ -116,8 +113,6 @@ export default function LoginPage() {
           </button>
         </form>
 
-<<<<<<< HEAD
-=======
         <div className="relative my-6">
           <div className="absolute inset-0 flex items-center">
             <div className="w-full border-t border-gray-700"></div>
@@ -136,7 +131,6 @@ export default function LoginPage() {
           {loading ? "Connecting..." : "Sign in with GitHub"}
         </button>
 
->>>>>>> ec4775d74a727c9454d744f04358018aef183d7a
         <p className="text-center text-gray-500 mt-6">
           Don't have an account?{" "}
           <Link href="/auth/signup" className="text-blue-500 hover:text-blue-400">

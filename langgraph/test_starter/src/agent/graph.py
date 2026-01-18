@@ -1,19 +1,11 @@
-<<<<<<< HEAD
 """Suspicious File Identifier Agent.
 
 Identifies files and functions that may contain security vulnerabilities
 based on file structure and function names.
-=======
-"""Main graph definition for the security scanning agent.
-
-This module defines the LangGraph state and graph structure, importing
-individual agents from separate modules for better organization.
->>>>>>> ec4775d74a727c9454d744f04358018aef183d7a
 """
 
 from __future__ import annotations
 
-<<<<<<< HEAD
 import json
 import os
 from typing import Any, Dict, List
@@ -24,15 +16,6 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
 from typing_extensions import TypedDict
-=======
-from dotenv import load_dotenv
-from langgraph.graph import StateGraph, START, END
-from typing_extensions import TypedDict
-from typing import Any, Dict, List
-
-from .agents.identify_suspicious import identify_suspicious_files
-from .agents.parallel_analyzer import analyze_all_vulnerabilities_parallel
->>>>>>> ec4775d74a727c9454d744f04358018aef183d7a
 
 # Load environment variables from .env file
 load_dotenv()
@@ -44,7 +27,6 @@ class State(TypedDict):
     file_structure: List[Dict[str, Any]]
     suspicious_files: List[Dict[str, Any]]
     auth_vulnerabilities: List[Dict[str, Any]]  # Authentication vulnerabilities found
-<<<<<<< HEAD
 
 
 def identify_suspicious_files(state: State) -> Dict[str, Any]:
@@ -344,30 +326,16 @@ def parse_auth_response(content: str, file_path: str) -> List[Dict[str, Any]]:
         pass
     
     return []
-=======
-    injection_vulnerabilities: List[Dict[str, Any]]  # Injection vulnerabilities found
-    sensitive_data_vulnerabilities: List[Dict[str, Any]]  # Sensitive data exposure vulnerabilities found
-    cryptographic_vulnerabilities: List[Dict[str, Any]]  # Cryptographic failure vulnerabilities found
->>>>>>> ec4775d74a727c9454d744f04358018aef183d7a
 
 
 # Define the graph
 graph = StateGraph(State)
 graph.add_node("identify_suspicious_files", identify_suspicious_files)
-<<<<<<< HEAD
 graph.add_node("analyze_auth_vulnerabilities", analyze_auth_vulnerabilities)
 
 # Flow: START -> identify_suspicious_files -> analyze_auth_vulnerabilities -> END
 graph.add_edge(START, "identify_suspicious_files")
 graph.add_edge("identify_suspicious_files", "analyze_auth_vulnerabilities")
 graph.add_edge("analyze_auth_vulnerabilities", END)
-=======
-graph.add_node("analyze_all_vulnerabilities_parallel", analyze_all_vulnerabilities_parallel)
-
-# Flow: START -> identify_suspicious_files -> analyze_all_vulnerabilities_parallel (runs auth, injection, sensitive_data & cryptographic in parallel) -> END
-graph.add_edge(START, "identify_suspicious_files")
-graph.add_edge("identify_suspicious_files", "analyze_all_vulnerabilities_parallel")
-graph.add_edge("analyze_all_vulnerabilities_parallel", END)
->>>>>>> ec4775d74a727c9454d744f04358018aef183d7a
 
 graph = graph.compile()
