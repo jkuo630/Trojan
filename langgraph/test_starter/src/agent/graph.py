@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from typing import Any, Dict, List
 
 from dotenv import load_dotenv
@@ -27,6 +28,7 @@ class State(TypedDict):
     file_structure: List[Dict[str, Any]]
     suspicious_files: List[Dict[str, Any]]
     auth_vulnerabilities: List[Dict[str, Any]]  # Authentication vulnerabilities found
+    injection_vulnerabilities: List[Dict[str, Any]]  # Injection vulnerabilities found
 
 
 def identify_suspicious_files(state: State) -> Dict[str, Any]:
@@ -296,6 +298,321 @@ If no vulnerabilities found, return empty array []. Be specific about what authe
     return {"auth_vulnerabilities": auth_vulnerabilities}
 
 
+def analyze_all_vulnerabilities_parallel(state: State) -> Dict[str, Any]:
+    """Coordinate parallel execution of auth and injection vulnerability analysis."""
+    if not state.get("suspicious_files"):
+        return {"auth_vulnerabilities": [], "injection_vulnerabilities": []}
+    
+    suspicious_files = state["suspicious_files"]
+    file_structure = state.get("file_structure", [])
+    
+    auth_vulnerabilities = []
+    injection_vulnerabilities = []
+    results_lock = threading.Lock()
+    
+    # Analyze each suspicious file - run auth and injection in parallel
+    for file_index, suspicious_file in enumerate(suspicious_files):
+        file_path = suspicious_file.get("file_path", "")
+        
+        # Thread function for auth analysis
+        def analyze_auth_thread(file_idx, sus_file):
+            try:
+                result = _analyze_single_file_auth(file_idx, sus_file, file_structure)
+                with results_lock:
+                    auth_vulnerabilities.extend(result)
+            except Exception as e:
+                error_msg = json.dumps({
+                    "type": "error",
+                    "data": {"message": f"Error in auth analysis for {file_path}: {str(e)}"}
+                })
+                print(f"__STREAM__:{error_msg}", flush=True)
+        
+        # Thread function for injection analysis  
+        def analyze_injection_thread(file_idx, sus_file):
+            try:
+                result = _analyze_single_file_injection(file_idx, sus_file, file_structure)
+                with results_lock:
+                    injection_vulnerabilities.extend(result)
+            except Exception as e:
+                error_msg = json.dumps({
+                    "type": "error",
+                    "data": {"message": f"Error in injection analysis for {file_path}: {str(e)}"}
+                })
+                print(f"__STREAM__:{error_msg}", flush=True)
+        
+        # Start both threads in parallel
+        auth_thread = threading.Thread(target=analyze_auth_thread, args=(file_index, suspicious_file))
+        injection_thread = threading.Thread(target=analyze_injection_thread, args=(file_index, suspicious_file))
+        
+        auth_thread.start()
+        injection_thread.start()
+        
+        # Wait for both to complete before moving to next file
+        auth_thread.join()
+        injection_thread.join()
+        
+        # Send combined file_analysis_start event (only once per file)
+        # Wait a moment to ensure both agents have streamed their vulnerabilities
+        combined_vulns = [v for v in auth_vulnerabilities if v.get("file_index") == file_index] + \
+                        [v for v in injection_vulnerabilities if v.get("file_index") == file_index]
+        
+        risk_level = suspicious_file.get("risk_level", "unknown")
+        suspicious_functions = suspicious_file.get("suspicious_functions", [])
+        
+        file_start_event = json.dumps({
+            "type": "file_analysis_start",
+            "data": {
+                "file_index": file_index,
+                "file_path": file_path,
+                "file_name": file_path.split("/").pop() if "/" in file_path else file_path,
+                "risk_level": risk_level,
+                "suspicious_functions": suspicious_functions,
+                "vulnerabilities": combined_vulns  # Combined from both agents
+            }
+        })
+        print(f"__STREAM__:{file_start_event}", flush=True)
+        
+        # Send file_analysis_complete event
+        file_complete_event = json.dumps({
+            "type": "file_analysis_complete",
+            "data": {
+                "file_index": file_index,
+                "file_path": file_path,
+                "vulnerabilities_found": len(combined_vulns)
+            }
+        })
+        print(f"__STREAM__:{file_complete_event}", flush=True)
+    
+    return {
+        "auth_vulnerabilities": auth_vulnerabilities,
+        "injection_vulnerabilities": injection_vulnerabilities
+    }
+
+
+def _analyze_single_file_auth(file_index: int, suspicious_file: Dict[str, Any], file_structure: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Helper function to analyze a single file for auth vulnerabilities (extracted for threading)."""
+    file_path = suspicious_file.get("file_path", "")
+    risk_level = suspicious_file.get("risk_level", "unknown")
+    suspicious_functions = suspicious_file.get("suspicious_functions", [])
+    
+    # Find file content
+    file_content = None
+    for file in file_structure:
+        file_path_from_struct = file.get("path") or "/".join(file.get("breadcrumb", [])) or file.get("name", "")
+        if file_path_from_struct == file_path or file_path in file_path_from_struct or file_path_from_struct in file_path:
+            file_content = file.get("content", "")
+            break
+    
+    functions_str = ", ".join(suspicious_functions) if suspicious_functions else "N/A"
+    
+    model_name = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    model = ChatOpenAI(model=model_name, temperature=0)
+    
+    system_prompt = """You are an authentication security specialist. Analyze code files for authentication vulnerabilities.
+
+Focus on finding:
+1. Weak password policies (no complexity requirements, short passwords)
+2. Missing authentication checks (public endpoints without auth)
+3. Session management flaws (weak tokens, no expiration, insecure storage)
+4. Credential handling issues (plaintext passwords, weak hashing)
+5. Authentication bypass (token manipulation, privilege escalation)
+6. Broken access control (IDOR, missing authorization checks)
+7. OAuth/JWT misconfigurations
+
+IMPORTANT: You MUST provide the exact line number for each vulnerability found. Analyze the code content carefully and identify the specific line where the vulnerability exists.
+
+Return JSON array of vulnerabilities found. Each entry MUST include: line (integer line number, not null), type (string), severity (high/medium/low), description (string), location (file path)."""
+
+    if file_content:
+        user_prompt = f"""Analyze this file for authentication vulnerabilities:
+
+File Path: {file_path}
+Risk Level: {risk_level}
+Functions: {functions_str}
+
+File Content:
+{file_content}
+
+Analyze this file for authentication security issues. Return a JSON array of vulnerabilities found.
+You MUST provide the exact line number for each vulnerability by analyzing the code content above.
+
+Example format:
+[
+  {{
+    "line": 42,
+    "type": "Weak Password Policy",
+    "severity": "medium",
+    "description": "No password complexity requirements detected in authentication logic at line 42",
+    "location": "{file_path}"
+  }}
+]
+
+If no vulnerabilities found, return empty array []. Be specific about what authentication issues you identify and ALWAYS include the line number."""
+    else:
+        user_prompt = f"""Analyze this file for authentication vulnerabilities:
+
+File Path: {file_path}
+Risk Level: {risk_level}
+Functions: {functions_str}
+
+Note: File content not available. Analyze based on file path and functions.
+
+Analyze this file for authentication security issues. Return a JSON array of vulnerabilities found.
+
+Example format:
+[
+  {{
+    "line": null,
+    "type": "Weak Password Policy",
+    "severity": "medium",
+    "description": "No password complexity requirements detected in authentication logic",
+    "location": "{file_path}"
+  }}
+]
+
+If no vulnerabilities found, return empty array []. Be specific about what authentication issues you identify."""
+
+    messages = [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
+    response = model.invoke(messages)
+    content = response.content if hasattr(response, "content") else str(response)
+    vulnerabilities = parse_auth_response(content, file_path)
+    
+    # Stream vulnerabilities as found
+    for vuln in vulnerabilities:
+        stream_event = json.dumps({
+            "type": "auth_vulnerability",
+            "data": {
+                **vuln,
+                "file_index": file_index,
+                "file_path": file_path
+            }
+        })
+        print(f"__STREAM__:{stream_event}", flush=True)
+    
+    # Add file_index to each vulnerability
+    for vuln in vulnerabilities:
+        vuln["file_index"] = file_index
+    
+    return vulnerabilities
+
+
+def _analyze_single_file_injection(file_index: int, suspicious_file: Dict[str, Any], file_structure: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Helper function to analyze a single file for injection vulnerabilities (extracted for threading)."""
+    file_path = suspicious_file.get("file_path", "")
+    risk_level = suspicious_file.get("risk_level", "unknown")
+    suspicious_functions = suspicious_file.get("suspicious_functions", [])
+    
+    # Find file content
+    file_content = None
+    for file in file_structure:
+        file_path_from_struct = file.get("path") or "/".join(file.get("breadcrumb", [])) or file.get("name", "")
+        if file_path_from_struct == file_path or file_path in file_path_from_struct or file_path_from_struct in file_path:
+            file_content = file.get("content", "")
+            break
+    
+    functions_str = ", ".join(suspicious_functions) if suspicious_functions else "N/A"
+    
+    model_name = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    model = ChatOpenAI(model=model_name, temperature=0)
+    
+    system_prompt = """You are an injection vulnerability security specialist. Analyze code files for injection vulnerabilities.
+
+Focus on finding:
+1. SQL Injection (concatenated queries, missing parameterization, raw SQL execution)
+2. NoSQL Injection (MongoDB, DynamoDB query manipulation)
+3. Command Injection (system(), exec(), shell commands with user input)
+4. LDAP Injection (LDAP query manipulation)
+5. OS Command Injection (subprocess, os.system, shell=True)
+6. Code Injection (eval(), exec(), deserialization of untrusted data)
+7. Template Injection (Jinja2, Twig, ERB template manipulation)
+8. XML/XXE Injection (XML external entity attacks)
+9. XPath Injection (XPath query manipulation)
+10. Header Injection (HTTP header manipulation)
+
+IMPORTANT: You MUST provide the exact line number for each vulnerability found. Analyze the code content carefully and identify the specific line where the vulnerability exists.
+
+Return JSON array of vulnerabilities found. Each entry MUST include: line (integer line number, not null), type (string - e.g., "SQL Injection", "Command Injection"), severity (high/medium/low), description (string), location (file path)."""
+
+    if file_content:
+        user_prompt = f"""Analyze this file for injection vulnerabilities:
+
+File Path: {file_path}
+Risk Level: {risk_level}
+Functions: {functions_str}
+
+File Content:
+{file_content}
+
+Analyze this file for injection security issues. Return a JSON array of vulnerabilities found.
+You MUST provide the exact line number for each vulnerability by analyzing the code content above.
+
+Example format:
+[
+  {{
+    "line": 42,
+    "type": "SQL Injection",
+    "severity": "high",
+    "description": "SQL query constructed using string concatenation with user input at line 42",
+    "location": "{file_path}"
+  }},
+  {{
+    "line": 67,
+    "type": "Command Injection",
+    "severity": "high",
+    "description": "os.system() called with user-controlled input without sanitization at line 67",
+    "location": "{file_path}"
+  }}
+]
+
+If no vulnerabilities found, return empty array []. Be specific about what injection issues you identify and ALWAYS include the line number."""
+    else:
+        user_prompt = f"""Analyze this file for injection vulnerabilities:
+
+File Path: {file_path}
+Risk Level: {risk_level}
+Functions: {functions_str}
+
+Note: File content not available. Analyze based on file path and functions.
+
+Analyze this file for injection security issues. Return a JSON array of vulnerabilities found.
+
+Example format:
+[
+  {{
+    "line": null,
+    "type": "SQL Injection",
+    "severity": "medium",
+    "description": "Suspicious function name suggests potential SQL query construction",
+    "location": "{file_path}"
+  }}
+]
+
+If no vulnerabilities found, return empty array []. Be specific about what injection issues you identify."""
+
+    messages = [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
+    response = model.invoke(messages)
+    content = response.content if hasattr(response, "content") else str(response)
+    vulnerabilities = parse_auth_response(content, file_path)  # Reuse parser - same format
+    
+    # Stream vulnerabilities as found
+    for vuln in vulnerabilities:
+        stream_event = json.dumps({
+            "type": "injection_vulnerability",
+            "data": {
+                **vuln,
+                "file_index": file_index,
+                "file_path": file_path
+            }
+        })
+        print(f"__STREAM__:{stream_event}", flush=True)
+    
+    # Add file_index to each vulnerability
+    for vuln in vulnerabilities:
+        vuln["file_index"] = file_index
+    
+    return vulnerabilities
+
+
 def parse_auth_response(content: str, file_path: str) -> List[Dict[str, Any]]:
     """Parse authentication vulnerability response from LLM."""
     import json
@@ -328,14 +645,163 @@ def parse_auth_response(content: str, file_path: str) -> List[Dict[str, Any]]:
     return []
 
 
+def analyze_injection_vulnerabilities(state: State) -> Dict[str, Any]:
+    """Injection vulnerability specialist that analyzes suspicious files for injection flaws."""
+    if not state.get("suspicious_files"):
+        return {"injection_vulnerabilities": []}
+    
+    suspicious_files = state["suspicious_files"]
+    file_structure = state.get("file_structure", [])
+    
+    # Get model
+    model_name = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    model = ChatOpenAI(
+        model=model_name,
+        temperature=0,
+    )
+    
+    injection_vulnerabilities = []
+    
+    # Analyze each suspicious file for injection issues - ONE AT A TIME
+    for file_index, suspicious_file in enumerate(suspicious_files):
+        file_path = suspicious_file.get("file_path", "")
+        risk_level = suspicious_file.get("risk_level", "unknown")
+        suspicious_functions = suspicious_file.get("suspicious_functions", [])
+        
+        # Find corresponding file in file_structure for more context and content
+        file_info = None
+        file_content = None
+        for file in file_structure:
+            file_path_from_struct = file.get("path") or "/".join(file.get("breadcrumb", [])) or file.get("name", "")
+            if file_path_from_struct == file_path or file_path in file_path_from_struct or file_path_from_struct in file_path:
+                file_info = file
+                file_content = file.get("content", "")
+                break
+        
+        functions_str = ", ".join(suspicious_functions) if suspicious_functions else "N/A"
+        
+        # System prompt for injection specialist
+        system_prompt = """You are an injection vulnerability security specialist. Analyze code files for injection vulnerabilities.
+
+Focus on finding:
+1. SQL Injection (concatenated queries, missing parameterization, raw SQL execution)
+2. NoSQL Injection (MongoDB, DynamoDB query manipulation)
+3. Command Injection (system(), exec(), shell commands with user input)
+4. LDAP Injection (LDAP query manipulation)
+5. OS Command Injection (subprocess, os.system, shell=True)
+6. Code Injection (eval(), exec(), deserialization of untrusted data)
+7. Template Injection (Jinja2, Twig, ERB template manipulation)
+8. XML/XXE Injection (XML external entity attacks)
+9. XPath Injection (XPath query manipulation)
+10. Header Injection (HTTP header manipulation)
+
+IMPORTANT: You MUST provide the exact line number for each vulnerability found. Analyze the code content carefully and identify the specific line where the vulnerability exists.
+
+Return JSON array of vulnerabilities found. Each entry MUST include: line (integer line number, not null), type (string - e.g., "SQL Injection", "Command Injection"), severity (high/medium/low), description (string), location (file path)."""
+
+        # Build user prompt with file content if available
+        if file_content:
+            user_prompt = f"""Analyze this file for injection vulnerabilities:
+
+File Path: {file_path}
+Risk Level: {risk_level}
+Functions: {functions_str}
+
+File Content:
+{file_content}
+
+Analyze this file for injection security issues. Return a JSON array of vulnerabilities found.
+You MUST provide the exact line number for each vulnerability by analyzing the code content above.
+
+Example format:
+[
+  {{
+    "line": 42,
+    "type": "SQL Injection",
+    "severity": "high",
+    "description": "SQL query constructed using string concatenation with user input at line 42",
+    "location": "{file_path}"
+  }},
+  {{
+    "line": 67,
+    "type": "Command Injection",
+    "severity": "high",
+    "description": "os.system() called with user-controlled input without sanitization at line 67",
+    "location": "{file_path}"
+  }}
+]
+
+If no vulnerabilities found, return empty array []. Be specific about what injection issues you identify and ALWAYS include the line number."""
+        else:
+            user_prompt = f"""Analyze this file for injection vulnerabilities:
+
+File Path: {file_path}
+Risk Level: {risk_level}
+Functions: {functions_str}
+
+Note: File content not available. Analyze based on file path and functions.
+
+Analyze this file for injection security issues. Return a JSON array of vulnerabilities found.
+
+Example format:
+[
+  {{
+    "line": null,
+    "type": "SQL Injection",
+    "severity": "medium",
+    "description": "Suspicious function name suggests potential SQL query construction",
+    "location": "{file_path}"
+  }}
+]
+
+If no vulnerabilities found, return empty array []. Be specific about what injection issues you identify."""
+
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_prompt),
+        ]
+        
+        try:
+            response = model.invoke(messages)
+            content = response.content if hasattr(response, "content") else str(response)
+            
+            # Parse vulnerabilities
+            vulnerabilities = parse_auth_response(content, file_path)  # Reuse parser - same format
+            injection_vulnerabilities.extend(vulnerabilities)
+            
+            # Stream injection vulnerabilities as they're found for this file
+            # Format: {"type": "injection_vulnerability", "data": {...}}
+            for vuln in vulnerabilities:
+                stream_event = json.dumps({
+                    "type": "injection_vulnerability",
+                    "data": {
+                        **vuln,
+                        "file_index": file_index,
+                        "file_path": file_path
+                    }
+                })
+                print(f"__STREAM__:{stream_event}", flush=True)
+            
+        except Exception as e:
+            error_msg = json.dumps({
+                "type": "error",
+                "data": {"message": f"Error analyzing injection vulnerabilities in {file_path}: {str(e)}"}
+            })
+            print(f"__STREAM__:{error_msg}", flush=True)
+            # Continue with other files even if one fails
+            continue
+    
+    return {"injection_vulnerabilities": injection_vulnerabilities}
+
+
 # Define the graph
 graph = StateGraph(State)
 graph.add_node("identify_suspicious_files", identify_suspicious_files)
-graph.add_node("analyze_auth_vulnerabilities", analyze_auth_vulnerabilities)
+graph.add_node("analyze_all_vulnerabilities_parallel", analyze_all_vulnerabilities_parallel)
 
-# Flow: START -> identify_suspicious_files -> analyze_auth_vulnerabilities -> END
+# Flow: START -> identify_suspicious_files -> analyze_all_vulnerabilities_parallel (runs auth & injection in parallel) -> END
 graph.add_edge(START, "identify_suspicious_files")
-graph.add_edge("identify_suspicious_files", "analyze_auth_vulnerabilities")
-graph.add_edge("analyze_auth_vulnerabilities", END)
+graph.add_edge("identify_suspicious_files", "analyze_all_vulnerabilities_parallel")
+graph.add_edge("analyze_all_vulnerabilities_parallel", END)
 
 graph = graph.compile()
