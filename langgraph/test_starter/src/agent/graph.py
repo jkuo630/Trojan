@@ -10,7 +10,7 @@ import os
 from typing import Any, Dict, List
 
 from dotenv import load_dotenv
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import StateGraph, START, END
 from typing_extensions import TypedDict
@@ -28,66 +28,47 @@ class State(TypedDict):
 
 def identify_suspicious_files(state: State) -> Dict[str, Any]:
     """Analyze file structure and identify suspicious files with security risks."""
-    # Initialize the LLM with Gemini
-    # Get API key from environment variable
-    api_key = os.getenv("GOOGLE_API_KEY")
+    # Initialize the LLM with OpenAI
+    # Get API key from environment variable (or it will use OPENAI_API_KEY from environment)
+    api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        raise ValueError("GOOGLE_API_KEY environment variable is required")
+        raise ValueError("OPENAI_API_KEY environment variable is required")
     
-    model = ChatGoogleGenerativeAI(
-        model="gemini-2.5-flash",
+    # Get model name from env (default: gpt-4o-mini for cost efficiency)
+    model_name = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    
+    model = ChatOpenAI(
+        model=model_name,
         temperature=0,
-        google_api_key=api_key,
+        # No max_tokens limit - uses model's maximum
+        # OPENAI_API_KEY is read automatically from environment
     )
 
-    # Prepare the prompt
+    # Prepare the prompt (no truncation - send full file structure)
     file_structure_str = format_file_structure(state["file_structure"])
 
-    system_prompt = """You are a security expert analyzing codebases for potential security vulnerabilities.
+    # Shorter system prompt to save tokens
+    system_prompt = """Security expert analyzing code for vulnerabilities.
 
-Your task is to identify suspicious files and functions that may contain security issues based on:
-- File paths and names
-- Function names
-- File structure context
+Identify suspicious files based on paths/functions. Focus on:
+1. Auth (login, auth, session, token)
+2. DB queries (sql, execute)
+3. User input (form, request)
+4. File ops (upload, download)
+5. API endpoints (route, handler)
+6. Crypto (hash, encrypt)
+7. Command exec (exec, shell)
 
-Focus on files that might contain:
-1. Authentication/authorization logic (login, auth, session, token)
-2. Database queries (query, db, sql, execute)
-3. User input handling (input, form, request, user_data)
-4. File operations (upload, download, file, save)
-5. API endpoints (route, handler, controller, api)
-6. Validation logic (validate, sanitize, escape)
-7. Crypto/encryption operations (hash, encrypt, decrypt, sign)
-8. Command execution (exec, system, shell, command)
+Return JSON array with: file_path, reason, risk_level (high/medium/low), suspicious_functions."""
 
-For each suspicious file, provide:
-- file_path: The full path or breadcrumb
-- reason: Why this file is suspicious
-- risk_level: "high", "medium", or "low"
-- suspicious_functions: List of function names that are particularly concerning
-
-Return your analysis as a JSON-serializable list of dictionaries.
-Be specific about why each file is suspicious."""
-
-    user_prompt = f"""Analyze the following file structure and identify suspicious files that may contain security vulnerabilities:
+    # Shorter user prompt to save tokens
+    user_prompt = f"""Analyze file structure and identify suspicious files:
 
 {file_structure_str}
 
-Return a JSON array of suspicious files. Each entry should have:
-- file_path: string (join breadcrumb with "/" if available, or use name)
-- reason: string (explanation of why it's suspicious)
-- risk_level: string ("high", "medium", or "low")
-- suspicious_functions: array of strings (function names that are concerning)
+Return JSON array. Each entry: file_path, reason, risk_level (high/medium/low), suspicious_functions.
 
-Example format:
-[
-  {{
-    "file_path": "src/auth/login.js",
-    "reason": "Contains authentication logic with functions like 'validate' and 'authenticate' that may not properly sanitize input",
-    "risk_level": "high",
-    "suspicious_functions": ["validate", "authenticate"]
-  }}
-]"""
+Example: [{{"file_path": "src/auth/login.js", "reason": "Auth logic may lack input sanitization", "risk_level": "high", "suspicious_functions": ["validate"]}}]"""
 
     messages = [
         SystemMessage(content=system_prompt),
@@ -109,12 +90,18 @@ Example format:
 def format_file_structure(file_structure: List[Dict[str, Any]]) -> str:
     """Format file structure for LLM input."""
     formatted = []
+    
     for file_info in file_structure:
         file_path = "/".join(file_info.get("breadcrumb", [])) or file_info.get("name", "unknown")
         functions = file_info.get("functions", [])
-        formatted.append(f"- {file_path}")
+        
+        line = f"- {file_path}"
         if functions:
-            formatted.append(f"  Functions: {', '.join(functions)}")
+            functions_str = ', '.join(functions)
+            line += f"\n  Functions: {functions_str}"
+        
+        formatted.append(line)
+    
     return "\n".join(formatted)
 
 
