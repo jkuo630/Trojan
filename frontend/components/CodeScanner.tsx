@@ -22,7 +22,9 @@ interface CodeScannerProps {
   className?: string;
   annotations?: CodeAnnotation[];
   onScanLine?: (lineIndex: number) => void;
+  onScanStart?: () => void; // Called when animation actually starts
   onScanComplete?: () => void;
+  skipAnimation?: boolean; // If true, skip animation and show all lines as scanned
 }
 
 interface CodeLineProps {
@@ -124,7 +126,9 @@ export function CodeScanner({
   className,
   annotations = [],
   onScanLine,
+  onScanStart,
   onScanComplete,
+  skipAnimation = false,
 }: CodeScannerProps) {
   const [tokens, setTokens] = useState<ThemedToken[][]>([]);
   const [loading, setLoading] = useState(true);
@@ -169,19 +173,60 @@ export function CodeScanner({
   useEffect(() => {
     if (loading || tokens.length === 0) return;
 
+    // If skipAnimation is true, immediately set to completed state
+    if (skipAnimation) {
+      setActiveLineIndex(tokens.length);
+      setVisualScanRect(null);
+      onScanComplete?.();
+      return;
+    }
+
     let currentLogicalLine = 0;
     let currentVisualLine = 0;
     let animationFrameId: number;
+    let accumulatedProgress = 0; // Track fractional line progress across frames
+    let frameCount = 0; // Count frames to control speed
 
     const processFrame = () => {
-      const LINES_PER_FRAME = 0.5; // Adjust for speed (higher = faster)
+      const LINES_PER_FRAME = 0.15; // Lines per frame (fractional = slower)
+      const FRAME_DELAY = Math.ceil(1 / LINES_PER_FRAME); // Process one step every N frames
       
       const container = containerRef.current;
       if (!container) return; // Should not happen if mounted
 
-      // Perform multiple scan steps per frame to increase speed
-      for (let i = 0; i < LINES_PER_FRAME; i++) {
-        // 1. Check completion
+      frameCount++;
+      
+      // Only process one step every FRAME_DELAY frames (slows down animation)
+      if (frameCount < FRAME_DELAY) {
+        // Still update visual state but don't advance - keep the highlight visible
+        // Update visual state for current position
+        if (currentLogicalLine < tokens.length) {
+          setActiveLineIndex(currentLogicalLine);
+          const codeSpan = document.getElementById(`code-span-${currentLogicalLine}`);
+          const row = document.getElementById(`line-${currentLogicalLine}`);
+          if (codeSpan && row) {
+            const rects = codeSpan.getClientRects();
+            const safeVisualLine = Math.min(currentVisualLine, rects.length - 1);
+            if (safeVisualLine >= 0) {
+              const currentRect = rects[safeVisualLine];
+              const containerRect = container.getBoundingClientRect();
+              const relativeTop = currentRect.top - containerRect.top + container.scrollTop;
+              setVisualScanRect({
+                top: relativeTop,
+                height: currentRect.height
+              });
+            }
+          }
+        }
+        animationFrameId = requestAnimationFrame(processFrame);
+        return;
+      }
+      
+      frameCount = 0; // Reset counter
+
+      // Process one step (advance by one line)
+      // Process only once per FRAME_DELAY frames
+      // 1. Check completion
         if (currentLogicalLine >= tokens.length) {
           setVisualScanRect(null);
           setActiveLineIndex(tokens.length);
@@ -214,7 +259,6 @@ export function CodeScanner({
             currentLogicalLine++;
             currentVisualLine = 0;
         }
-      }
 
       // 4. Update Visual State (ONCE per frame)
       // Use the *last* processed position for the UI update
@@ -263,6 +307,7 @@ export function CodeScanner({
     // Start scanning
     // Small timeout to allow initial render/paint
     const timeoutId = setTimeout(() => {
+        onScanStart?.(); // Notify that animation is starting
         animationFrameId = requestAnimationFrame(processFrame);
     }, 100);
 
@@ -270,7 +315,7 @@ export function CodeScanner({
         clearTimeout(timeoutId);
         cancelAnimationFrame(animationFrameId);
     };
-  }, [loading, tokens, annotations]);
+  }, [loading, tokens, annotations, skipAnimation, onScanStart, onScanComplete]);
 
   if (loading && (code === null || code === undefined)) {
     return (
@@ -301,7 +346,7 @@ export function CodeScanner({
       <div
         ref={containerRef}
         id="code-container"
-        className="relative z-10 overflow-auto h-full"
+        className="relative z-10 overflow-auto h-full scrollbar-hide"
       >
         {/* Floating Scan Highlight */}
         {visualScanRect && (

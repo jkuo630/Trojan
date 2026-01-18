@@ -17,8 +17,11 @@ interface ScannerDemoProps {
   }[];
   currentFileIndex?: number;
   onFileSelect?: (index: number) => void;
+  onScanStart?: () => void; // Called when scan animation starts
   onScanComplete?: () => void;
   wsConnected?: boolean;
+  authVulnerabilities?: any[]; // Auth vulnerabilities from the agent
+  completedFiles?: Set<number>; // Set of completed file indices
 }
 
 export default function ScannerDemo({ 
@@ -26,17 +29,63 @@ export default function ScannerDemo({
   repoFiles, 
   currentFileIndex = 0,
   onFileSelect,
+  onScanStart,
   onScanComplete,
-  wsConnected = false
+  wsConnected = false,
+  authVulnerabilities = [],
+  completedFiles = new Set()
 }: ScannerDemoProps) {
   const [foundIssues, setFoundIssues] = useState<CodeAnnotation[]>([]);
   const [logs, setLogs] = useState<string[]>([]);
   const logsEndRef = useRef<HTMLDivElement>(null);
 
-  // Get current file annotations
-  const currentAnnotations = repoFiles && repoFiles[currentFileIndex]?.vulnerabilities 
+  // Get current file annotations from repoFiles
+  const fileAnnotations = repoFiles && repoFiles[currentFileIndex]?.vulnerabilities 
     ? repoFiles[currentFileIndex].vulnerabilities 
     : [];
+
+  // Convert auth vulnerabilities to annotations for current file
+  const currentFile = repoFiles?.[currentFileIndex];
+  const currentFilePath = currentFile?.path || "";
+  
+  // Filter auth vulnerabilities for current file and convert to CodeAnnotation format
+  const authAnnotations: CodeAnnotation[] = authVulnerabilities
+    .filter((vuln: any) => {
+      // Match vulnerabilities to current file by path
+      const vulnPath = vuln.location || vuln.file_path || "";
+      const fileName = currentFilePath.split("/").pop() || currentFile?.name || "";
+      const matchesFile = vulnPath.includes(fileName) || vulnPath === currentFilePath || 
+                         (vuln.file_index !== undefined && vuln.file_index === currentFileIndex);
+      // Only create annotation if we have a line number (null/undefined means we can't highlight a specific line)
+      return matchesFile && vuln.line !== null && vuln.line !== undefined;
+    })
+    .map((vuln: any): CodeAnnotation => {
+      // Map severity to annotation type: high/medium/critical -> error (red), low -> warning (yellow)
+      const annotationType: "error" | "warning" = 
+        (vuln.severity === "high" || vuln.severity === "critical" || !vuln.severity) 
+          ? "error"  // Red highlight for high severity
+          : "warning"; // Yellow highlight for low severity
+      
+      return {
+        line: vuln.line as number, // Line number is guaranteed from filter above
+        type: annotationType,
+        label: vuln.type || vuln.description || "Authentication vulnerability"
+      };
+    });
+
+  // Combine file annotations with auth annotations (prioritize auth if duplicate line)
+  const currentAnnotations = [...fileAnnotations, ...authAnnotations].reduce((acc: CodeAnnotation[], annotation: CodeAnnotation) => {
+    // Remove duplicates based on line number, keep auth annotations (error) over file annotations
+    const existing = acc.find(a => a.line === annotation.line);
+    if (!existing) {
+      acc.push(annotation);
+    } else if (annotation.type === "error" && existing.type !== "error") {
+      // Replace with error type if it's more severe
+      const index = acc.indexOf(existing);
+      acc[index] = annotation;
+    }
+    return acc;
+  }, []);
 
   // Reset found issues when file changes
   useEffect(() => {
@@ -102,7 +151,7 @@ export default function ScannerDemo({
   const displayFiles = repoFiles 
     ? repoFiles.map((f, i) => ({
         name: f.name,
-        status: i < currentFileIndex ? "completed" : i === currentFileIndex ? "scanning" : "pending"
+        status: completedFiles.has(i) ? "completed" : i === currentFileIndex ? "scanning" : "pending"
       }))
     : demoFiles;
 
@@ -113,7 +162,7 @@ export default function ScannerDemo({
       {/* Left Sidebar - File Explorer */}
       <div className="w-64 flex-shrink-0 border-r border-gray-800 bg-[#0d1117] p-4 flex flex-col">
         <h2 className="mb-4 text-xs font-bold uppercase tracking-wider text-gray-500">Suspicious Files</h2>
-        <div className="space-y-1 overflow-y-auto max-h-[calc(100vh-100px)]">
+        <div className="space-y-1 overflow-y-auto max-h-[calc(100vh-100px)] scrollbar-hide">
           {displayFiles.map((file, i) => (
             <div
               key={file.name + i}
@@ -176,7 +225,9 @@ export default function ScannerDemo({
               className="shadow-2xl ring-1 ring-white/5 bg-[#0d1117] backdrop-blur-sm h-full"
               annotations={currentAnnotations || []}
               onScanLine={handleScanLine}
+              onScanStart={onScanStart}
               onScanComplete={onScanComplete}
+              skipAnimation={completedFiles.has(currentFileIndex)}
             />
           </div>
         </div>
@@ -187,7 +238,7 @@ export default function ScannerDemo({
             <Terminal className="h-3 w-3" />
             <span>Agent Logs</span>
           </div>
-          <div className="h-[calc(100%-1.5rem)] overflow-y-auto font-mono text-xs text-gray-400 space-y-1">
+          <div className="h-[calc(100%-1.5rem)] overflow-y-auto font-mono text-xs text-gray-400 space-y-1 scrollbar-hide">
             {logs.length === 0 && (
               <span className="opacity-50 italic">Waiting for agent to start...</span>
             )}
@@ -210,10 +261,61 @@ export default function ScannerDemo({
       </div>
 
       {/* Right Sidebar - Vulnerabilities */}
-      <div className="w-80 flex-shrink-0 border-l border-gray-800 bg-[#0d1117] p-4 flex flex-col">
+      <div className="w-80 flex-shrink-0 border-l border-gray-800 bg-[#0d1117] p-4 flex flex-col overflow-hidden">
         <h2 className="mb-4 text-xs font-bold uppercase tracking-wider text-gray-500">Scan Results</h2>
-        <div className="space-y-3">
+        <div className="space-y-3 overflow-y-auto flex-1 scrollbar-hide">
           <AnimatePresence mode="popLayout">
+            {/* Auth Vulnerabilities from Agent */}
+            {authVulnerabilities.map((vuln: any, i: number) => {
+              const severity = vuln.severity?.toLowerCase() || "medium";
+              const isHigh = severity === "high" || severity === "critical";
+              const isLow = severity === "low";
+              
+              return (
+                <motion.div
+                  key={`auth-${i}-${vuln.location}-${vuln.line || 0}`}
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, scale: 0.95 }}
+                  className={`rounded-lg border p-3 ${
+                    isHigh
+                      ? "border-red-500/20 bg-red-500/10"
+                      : isLow
+                      ? "border-yellow-500/20 bg-yellow-500/10"
+                      : "border-orange-500/20 bg-orange-500/10"
+                  }`}
+                >
+                  <div className="flex items-start gap-3">
+                    <div className={`mt-0.5 rounded p-1 ${
+                      isHigh
+                        ? "bg-red-500/20 text-red-400"
+                        : isLow
+                        ? "bg-yellow-500/20 text-yellow-400"
+                        : "bg-orange-500/20 text-orange-400"
+                    }`}>
+                      {isHigh ? <ShieldAlert className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h3 className={`text-sm font-medium ${
+                        isHigh ? "text-red-200" : isLow ? "text-yellow-200" : "text-orange-200"
+                      }`}>
+                        {vuln.type || "Authentication Vulnerability"}
+                      </h3>
+                      <p className="mt-1 text-xs text-gray-400 line-clamp-2">
+                        {vuln.description || "No description available"}
+                      </p>
+                      <p className="mt-1 text-xs text-gray-500">
+                        {vuln.location?.split("/").pop() || "Unknown file"}
+                        {vuln.line && ` • Line ${vuln.line}`}
+                        {vuln.severity && ` • ${vuln.severity.toUpperCase()}`}
+                      </p>
+                    </div>
+                  </div>
+                </motion.div>
+              );
+            })}
+            
+            {/* Code scanning issues */}
             {foundIssues.map((issue, i) => (
               <motion.div
                 key={issue.line}
@@ -257,7 +359,7 @@ export default function ScannerDemo({
             ))}
           </AnimatePresence>
           
-          {foundIssues.length === 0 && (
+          {foundIssues.length === 0 && authVulnerabilities.length === 0 && (
             <div className="py-8 text-center text-sm text-gray-600">
               <div className="mb-2 flex justify-center">
                 <motion.div
