@@ -12,11 +12,20 @@ export default function SignupPage() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [attempts, setAttempts] = useState(0);
+  const maxAttempts = 5;
+  const lockoutTime = 30000; // 30 seconds
 
   const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError("");
+
+    if (attempts >= maxAttempts) {
+      setError("Too many attempts. Please try again later.");
+      setLoading(false);
+      return;
+    }
 
     try {
       const { data, error } = await supabase.auth.signUp({
@@ -29,6 +38,12 @@ export default function SignupPage() {
       router.push("/projects");
     } catch (err: any) {
       setError(err.message || "Failed to sign up");
+      setAttempts(attempts + 1);
+
+      // Reset attempts after lockout time
+      setTimeout(() => {
+        setAttempts(0);
+      }, lockoutTime);
     } finally {
       setLoading(false);
     }
