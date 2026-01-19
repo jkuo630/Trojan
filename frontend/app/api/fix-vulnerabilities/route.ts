@@ -2,8 +2,20 @@ import { NextRequest, NextResponse } from "next/server";
 import { spawn } from "child_process";
 import path from "path";
 
+// Import authentication middleware
+import { authenticateUser } from "./authMiddleware";
+
 export async function POST(req: NextRequest) {
   try {
+    // Authenticate the user before processing the request
+    const isAuthenticated = await authenticateUser(req);
+    if (!isAuthenticated) {
+      return NextResponse.json(
+        { success: false, error: "Unauthorized access" },
+        { status: 401 }
+      );
+    }
+
     const body = await req.json();
     const { file_fix_request, github_token, base_branch } = body;
 
