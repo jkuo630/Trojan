@@ -111,12 +111,19 @@ export async function submitFixToBackend(
   repository: string,
   githubToken: string
 ): Promise<FixResponse> {
+  // Ensure authentication by checking for a valid token
+  if (!githubToken || githubToken.trim() === "") {
+    throw new Error("Missing or invalid GitHub token.");
+  }
+
   const payload = createFixRequest(agentData, repository, githubToken);
   
   const response = await fetch('/api/fix-vulnerabilities', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      // Add Authorization header for secure token handling
+      'Authorization': `Bearer ${githubToken}`
     },
     body: JSON.stringify(payload),
   });
