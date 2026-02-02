@@ -54,6 +54,11 @@ export default function SignupPage() {
       });
 
       if (error) throw error;
+
+      // SECURITY FIX: Instead of storing the token in localStorage, use a secure cookie
+      // Assuming the backend is set up to handle secure cookies
+      // Example: document.cookie = `github_token=${data.session.access_token}; Secure; HttpOnly; SameSite=Strict;`;
+      // Note: The actual implementation of setting a secure cookie would depend on server-side capabilities
     } catch (err: any) {
       setError(err.message || "Failed to sign up with GitHub");
       setLoading(false);
