@@ -291,27 +291,30 @@ export async function POST(req: NextRequest) {
       const supabase = createServerClient();
       const { data: { user } } = await supabase.auth.getUser();
 
-      if (user) {
-        const repositoryName = `${owner}/${repo}`;
-        const { data, error } = await supabase
-          .from("projects")
-          .insert({
-            user_id: user.id,
-            github_url: cleanUrl,
-            repository_name: repositoryName,
-            file_structure: processedFiles,
-            suspicious_files: suspiciousFiles,
-            status: "completed",
-          })
-          .select()
-          .single();
+      if (!user) {
+        // Return an error response if the user is not authenticated
+        return NextResponse.json({ error: "User not authenticated" }, { status: 401 });
+      }
 
-        if (!error && data) {
-          projectId = data.id;
-          console.log(`Project saved to Supabase: ${projectId}`);
-        } else {
-          console.error("Error saving project to Supabase:", error);
-        }
+      const repositoryName = `${owner}/${repo}`;
+      const { data, error } = await supabase
+        .from("projects")
+        .insert({
+          user_id: user.id,
+          github_url: cleanUrl,
+          repository_name: repositoryName,
+          file_structure: processedFiles,
+          suspicious_files: suspiciousFiles,
+          status: "completed",
+        })
+        .select()
+        .single();
+
+      if (!error && data) {
+        projectId = data.id;
+        console.log(`Project saved to Supabase: ${projectId}`);
+      } else {
+        console.error("Error saving project to Supabase:", error);
       }
     } catch (saveError) {
       console.error("Error saving project:", saveError);
