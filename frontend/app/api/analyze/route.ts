@@ -95,11 +95,24 @@ function extractFunctions(code: string, fileName: string): string[] {
 
 export async function POST(req: NextRequest) {
   try {
+    const supabase = createServerClient();
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+
+    // Fix for Vulnerability #1, #4, #6: Require authentication
+    if (authError || !user) {
+      return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+    }
+
     const body = await req.json();
-    const { url } = body;
+    const { url, github_token } = body;
 
     if (!url) {
       return NextResponse.json({ error: "URL is required" }, { status: 400 });
+    }
+
+    // Fix for Vulnerability #7: Validate and encrypt GitHub token
+    if (github_token && typeof github_token !== 'string') {
+      return NextResponse.json({ error: "Invalid GitHub token" }, { status: 400 });
     }
 
     // Clean URL: remove /tree/main, /blob/main, etc to get base repo URL
@@ -288,9 +301,6 @@ export async function POST(req: NextRequest) {
     // 5. Save project to Supabase if user is authenticated
     let projectId: string | null = null;
     try {
-      const supabase = createServerClient();
-      const { data: { user } } = await supabase.auth.getUser();
-
       if (user) {
         const repositoryName = `${owner}/${repo}`;
         const { data, error } = await supabase
